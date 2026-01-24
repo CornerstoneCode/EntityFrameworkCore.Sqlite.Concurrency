@@ -7,7 +7,7 @@
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
         <RootNamespace>EntityFrameworkCore.Sqlite.Concurrency</RootNamespace>
-        <Version>10.0.0</Version>
+        <Version>10.0.1</Version>
 
         <!-- SEO-Optimized Metadata - PERFORMANCE FIRST -->
         <Title>EntityFrameworkCore.Sqlite.Concurrency - 10x Faster SQLite for EFCore with Parallel Reads &amp; No Lock Errors</Title>
