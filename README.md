@@ -1,17 +1,17 @@
-# EFCore.Sqlite.Concurrency
+# EntityFrameworkCore.Sqlite.Concurrency
 
-[![NuGet Version](https://img.shields.io/nuget/v/EFCore.Sqlite.Concurrency?style=flat-square&color=2A4F7B)](https://www.nuget.org/packages/EFCore.Sqlite.Concurrency)
-[![Downloads](https://img.shields.io/nuget/dt/EFCore.Sqlite.Concurrency?style=flat-square&color=1C7C54)](https://www.nuget.org/packages/EFCore.Sqlite.Concurrency)
+[![NuGet Version](https://img.shields.io/nuget/v/EntityFrameworkCore.Sqlite.Concurrency?style=flat-square&color=2A4F7B)](https://www.nuget.org/packages/EntityFrameworkCore.Sqlite.Concurrency)
+[![Downloads](https://img.shields.io/nuget/dt/EntityFrameworkCore.Sqlite.Concurrency?style=flat-square&color=1C7C54)](https://www.nuget.org/packages/EntityFrameworkCore.Sqlite.Concurrency)
 [![License: MIT](https://img.shields.io/badge/License-MIT-5E2B97?style=flat-square)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10-2A4F7B?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
 
-**High-performance SQLite for .NET: Eliminate `database is locked` errors with 10x faster bulk inserts and true parallel reads.** EFCore.Sqlite.Concurrency is the definitive Entity Framework Core extension that transforms SQLite into a robust, high-throughput database for multi-threaded .NET applications.
+**High-performance SQLite for .NET: Eliminate `database is locked` errors with 10x faster bulk inserts and true parallel reads.** EntityFrameworkCore.Sqlite.Concurrency is the definitive Entity Framework Core extension that transforms SQLite into a robust, high-throughput database for multi-threaded .NET applications.
 
 ## 🚀 The Performance & Reliability Upgrade Your App Needs
 
 Standard EF Core with SQLite struggles with concurrency and performance: frequent locking errors, slow bulk operations, and read contention under load. Our extension solves all three problems simultaneously.
 
-**Why EFCore.Sqlite.Concurrency delivers superior performance:**
+**Why EntityFrameworkCore.Sqlite.Concurrency delivers superior performance:**
 
 ✅ **10x Faster Bulk Inserts** - Optimized batching with intelligent transaction management  
 ✅ **True Parallel Read Scaling** - Unlimited concurrent reads with zero blocking  
@@ -24,10 +24,10 @@ Standard EF Core with SQLite struggles with concurrency and performance: frequen
 
 ```bash
 # Package Manager
-Install-Package EFCore.Sqlite.Concurrency
+Install-Package EntityFrameworkCore.Sqlite.Concurrency
 
 # .NET CLI
-dotnet add package EFCore.Sqlite.Concurrency
+dotnet add package EntityFrameworkCore.Sqlite.Concurrency
 
 # For maximum bulk insert performance (optional)
 dotnet add package EFCore.BulkExtensions.Sqlite
@@ -127,7 +127,7 @@ services.AddDbContext<AppDbContext>(options =>
 
 ## 📊 Performance Benchmarks: Real Results
 
-| Operation | Standard EF Core SQLite | EFCore.Sqlite.Concurrency | Performance Gain |
+| Operation | Standard EF Core SQLite | EntityFrameworkCore.Sqlite.Concurrency | Performance Gain |
 |-----------|-------------------------|-------------------------|------------------|
 | **Bulk Insert (10,000 records)** | ~4.2 seconds | ~0.8 seconds | **5.25x faster** |
 | **Bulk Insert (100,000 records)** | ~42 seconds | ~4.1 seconds | **10.2x faster** |
@@ -201,7 +201,7 @@ public async Task<TResult> ExecuteHighPerformanceOperationAsync<TResult>(
 
 Upgrade path for existing applications:
 
-1. **Add NuGet Package** → `Install-Package EFCore.Sqlite.Concurrency`
+1. **Add NuGet Package** → `Install-Package EntityFrameworkCore.Sqlite.Concurrency`
 2. **Update DbContext Configuration** → Change `UseSqlite()` to `UseSqliteWithConcurrency()`
 3. **Replace Bulk Operations** → Change loops with `SaveChanges()` to `BulkInsertSafeAsync()`
 4. **Remove Custom Retry Logic** → Our built-in retry handles everything optimally
@@ -215,9 +215,9 @@ Upgrade path for existing applications:
 
 ## 📄 License
 
-EFCore.Sqlite.Concurrency is licensed under the MIT License. Free for commercial use, open source projects, and enterprise applications.
+EntityFrameworkCore.Sqlite.Concurrency is licensed under the MIT License. Free for commercial use, open source projects, and enterprise applications.
 
 ---
 
-**Stop compromising on SQLite performance.** Get enterprise-grade speed and 100% reliability with EFCore.Sqlite.Concurrency—the only EF Core extension that fixes SQLite's limitations while unlocking its full potential.
+**Stop compromising on SQLite performance.** Get enterprise-grade speed and 100% reliability with EntityFrameworkCore.Sqlite.Concurrency—the only EF Core extension that fixes SQLite's limitations while unlocking its full potential.
  

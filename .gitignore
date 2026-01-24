@@ -2,3 +2,5 @@
 Sqlite-Concurrency/bin/
 
 Sqlite-Concurrency/obj/
+
+.idea/

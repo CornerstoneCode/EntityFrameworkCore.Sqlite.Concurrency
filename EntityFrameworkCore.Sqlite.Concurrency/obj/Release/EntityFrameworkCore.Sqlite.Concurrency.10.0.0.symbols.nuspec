@@ -1,0 +1,29 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>EntityFrameworkCore.Sqlite.Concurrency</id>
+    <version>10.0.0</version>
+    <title>EntityFrameworkCore.Sqlite.Concurrency - 10x Faster SQLite for EFCore with Parallel Reads &amp; No Lock Errors</title>
+    <authors>Mike Gotfryd</authors>
+    <license type="expression">MIT</license>
+    <licenseUrl>https://licenses.nuget.org/MIT</licenseUrl>
+    <icon>res/logo.png</icon>
+    <readme>README.md</readme>
+    <projectUrl>https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency</projectUrl>
+    <description>High-performance Entity Framework Core extension for SQLite with 10x faster bulk inserts and true parallel reads. Eliminate "database is locked" errors (SQLITE_BUSY) with automatic thread-safe concurrency management for .NET 10. Production-ready performance optimization that fixes SQLite's limitations while delivering enterprise-grade speed and reliability.</description>
+    <releaseNotes>v10.0.0: Production release with performance optimizations. Achieve 10x faster bulk inserts and true parallel read scaling while eliminating SQLite database locked errors. Features: Automatic write serialization, optimized connection management, WAL mode configuration, and intelligent retry logic. Built for Entity Framework Core 10.0.0+ on .NET 10.</releaseNotes>
+    <copyright>© 2026 Cornerstone Code. All rights reserved.</copyright>
+    <tags>SQLite performance high-performance bulk insert parallel reads EntityFrameworkCore EFCore Entity Framework Core concurrency thread-safe database locked SQLITE_BUSY multi-threading .NET 10 dotnet Entity Framework ORM data access async await transactions locking write queue WAL mode optimization speed fast throughput scaling benchmarks 10x faster</tags>
+    <repository type="git" url="https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency.git" commit="ba6468423d2d643bb3c6c559961a7f8f6d819617" />
+    <dependencies>
+      <group targetFramework="net10.0">
+        <dependency id="Microsoft.Data.Sqlite" version="10.0.0" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.EntityFrameworkCore.Sqlite" version="10.0.0" exclude="Build,Analyzers" />
+        <dependency id="Microsoft.Extensions.Logging.Abstractions" version="10.0.0" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EntityFrameworkCore.Sqlite.Concurrency\bin\Release\net10.0\EFCore.Sqlite.Concurrency.pdb" target="lib\net10.0\EFCore.Sqlite.Concurrency.pdb" />
+  </files>
+</package>
