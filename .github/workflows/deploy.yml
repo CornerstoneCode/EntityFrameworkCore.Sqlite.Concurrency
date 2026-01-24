@@ -1,22 +1,33 @@
 name: Deploy to NuGet
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - name: Get Version
+        id: get_version
+        run: |
+          VERSION=$(grep -oP '(?<=<Version>).*?(?=</Version>)' EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
 
       - name: Restore dependencies
         run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj
@@ -27,5 +38,19 @@ jobs:
       - name: Pack
         run: dotnet pack EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-build -o out
 
+      - name: Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
+          name: Release v${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            out/*.nupkg
+            out/*.snupkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Push to NuGet
-        run: dotnet nuget push "out/*.nupkg" --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "out/*.nupkg" --source https://api.nuget.org/v3/index.json --skip-duplicate
