@@ -2,6 +2,15 @@ name: Deploy to NuGet
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - beta
 
 jobs:
   deploy:
@@ -10,7 +19,7 @@ jobs:
       contents: write
       packages: write
       id-token: write
-    environment: production
+    environment: ${{ github.event.inputs.environment }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +37,12 @@ jobs:
           VERSION=$(grep -oP '(?<=<Version>).*?(?=</Version>)' EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
+          
+          if [[ $VERSION == *"-"* ]] || [[ "${{ github.event.inputs.environment }}" == "beta" ]]; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Restore dependencies
         run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj
@@ -45,7 +60,7 @@ jobs:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           name: Release v${{ steps.get_version.outputs.VERSION }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.get_version.outputs.IS_PRERELEASE == 'true' }}
           files: |
             out/*.nupkg
             out/*.snupkg
