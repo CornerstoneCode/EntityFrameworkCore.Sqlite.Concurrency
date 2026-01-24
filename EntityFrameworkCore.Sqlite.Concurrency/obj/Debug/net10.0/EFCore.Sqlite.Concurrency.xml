@@ -1,8 +1,0 @@
-<?xml version="1.0"?>
-<doc>
-    <assembly>
-        <name>EFCore.Sqlite.Concurrency</name>
-    </assembly>
-    <members>
-    </members>
-</doc>

@@ -4,3 +4,5 @@ Sqlite-Concurrency/bin/
 Sqlite-Concurrency/obj/
 
 .idea/
+
+EntityFrameworkCore.Sqlite.Concurrency/obj/
