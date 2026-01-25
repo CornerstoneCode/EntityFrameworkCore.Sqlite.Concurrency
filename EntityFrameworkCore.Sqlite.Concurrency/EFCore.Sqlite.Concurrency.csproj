@@ -108,5 +108,8 @@ Get started in one line. Stop compromising on SQLite reliability and speed.
     <ItemGroup>
         <None Include="..\README.md" Pack="true" PackagePath="\" />
         <None Include="res\logo.png" Pack="true" PackagePath="\" />
+        <None Update="packages.lock.json">
+          <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 </Project>
