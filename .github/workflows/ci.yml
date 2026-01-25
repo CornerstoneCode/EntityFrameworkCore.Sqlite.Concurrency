@@ -22,7 +22,10 @@ jobs:
         cache: true
 
     - name: Restore dependencies
-      run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency.sln
+      run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj
 
     - name: Build
-      run: dotnet build --configuration Release --no-restore
+      run: dotnet build EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-restore
+
+    - name: Pack
+      run: dotnet pack EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-build -o out 

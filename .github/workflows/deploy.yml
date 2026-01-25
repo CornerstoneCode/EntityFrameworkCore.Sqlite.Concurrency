@@ -46,7 +46,7 @@ jobs:
           fi
 
       - name: Restore dependencies
-        run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency.sln
+        run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj
 
       - name: Build
         run: dotnet build EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-restore
