@@ -5,6 +5,9 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <RootNamespace>EntityFrameworkCore.Sqlite.Concurrency</RootNamespace>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
 
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
