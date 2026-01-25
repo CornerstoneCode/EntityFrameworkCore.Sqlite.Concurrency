@@ -38,15 +38,8 @@ public static class SqliteConcurrencyExtensions
                         SetBusyTimeout(sqliteConnection, options.BusyTimeout);
                         
                         // Additional optimizations
-                        if (options.UseWriteQueue)
-                        {
-                            ConfigureForWriteQueue(sqliteConnection);
-                        }
-                        
-                        if (options.EnableWalCheckpointManagement)
-                        {
-                            SetWalCheckpoint(sqliteConnection, options.WalAutoCheckpoint);
-                        }
+                        ConfigureForWriteQueue(sqliteConnection);
+                        SetWalCheckpoint(sqliteConnection, options.WalAutoCheckpoint);
                     }
                 }
             };
@@ -58,11 +51,9 @@ public static class SqliteConcurrencyExtensions
                 sqliteOptions.CommandTimeout(options.CommandTimeout);
             });
             
-            // Add interceptors if using write queue
-            if (options.UseWriteQueue)
-            {
-                optionsBuilder.AddInterceptors(new SqliteConcurrencyInterceptor(options));
-            }
+            // Always add interceptors for write queue
+            var interceptor = SqliteConnectionEnhancer.GetInterceptor(enhancedConnectionString, options);
+            optionsBuilder.AddInterceptors(interceptor);
             
             return optionsBuilder;
         }
@@ -95,36 +86,41 @@ public static class SqliteConcurrencyExtensions
         IEnumerable<T> entities,
         CancellationToken cancellationToken = default) where T : class
     {
-        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
-        await context.Database.ExecuteSqlRawAsync("BEGIN IMMEDIATE", cancellationToken);
-
-        // Check if EFCore.BulkExtensions is available via reflection
-        var bulkExtensionsType =
-            Type.GetType("EFCore.BulkExtensions.SqliteBulkExtensions, EFCore.BulkExtensions.Sqlite");
-        if (bulkExtensionsType != null)
+        if (SqliteConnectionEnhancer.IsWriteLockHeld.Value)
         {
-            var method = bulkExtensionsType.GetMethod("BulkInsertAsync",
-                new[] { typeof(DbContext), typeof(IEnumerable<T>), typeof(CancellationToken) });
-
-            if (method != null)
-            {
-                await (Task)method.Invoke(null, new object[] { context, entities, cancellationToken });
-                await transaction.CommitAsync(cancellationToken);
-                return;
-            }
-        }
-
-        // Fallback to batch inserts
-        var batchSize = 1000;
-        var batches = entities.Chunk(batchSize);
-
-        foreach (var batch in batches)
-        {
-            await context.AddRangeAsync(batch, cancellationToken);
+            await context.AddRangeAsync(entities, cancellationToken);
             await context.SaveChangesAsync(cancellationToken);
+            return;
         }
 
-        await transaction.CommitAsync(cancellationToken);
+        var connectionString = context.Database.GetDbConnection().ConnectionString;
+        var enhancedConnectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
+        var writeLock = SqliteConnectionEnhancer.GetWriteLock(enhancedConnectionString);
+
+        await writeLock.WaitAsync(cancellationToken);
+        SqliteConnectionEnhancer.IsWriteLockHeld.Value = true;
+
+        try
+        {
+            await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+
+            // Batch inserts
+            var batchSize = 1000;
+            var batches = entities.Chunk(batchSize);
+
+            foreach (var batch in batches)
+            {
+                await context.AddRangeAsync(batch, cancellationToken);
+                await context.SaveChangesAsync(cancellationToken);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
+            writeLock.Release();
+        }
     }
 
     private static void ConfigureForWriteQueue(SqliteConnection connection)

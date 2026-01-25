@@ -9,6 +9,7 @@
       "EFCore.Sqlite.Concurrency/10.0.2": {
         "dependencies": {
           "Microsoft.EntityFrameworkCore.Sqlite": "10.0.0",
+          "Microsoft.Extensions.DependencyInjection": "10.0.0",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
         },
         "runtime": {

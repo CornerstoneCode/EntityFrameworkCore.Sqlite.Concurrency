@@ -86,6 +86,7 @@ Get started in one line. Stop compromising on SQLite reliability and speed.
         <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
         <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
         <!-- SourceLink for debugging support -->
         <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
@@ -93,7 +94,6 @@ Get started in one line. Stop compromising on SQLite reliability and speed.
 
     <!-- Optional Dependencies (Conditional) -->
     <ItemGroup>
-        <PackageReference Include="EFCore.BulkExtensions.Sqlite" Version="10.0.0" Condition="'$(IncludeBulkExtensions)' == 'true'" />
         <PackageReference Include="MemoryPack" Version="2.0.0" Condition="'$(IncludeMemoryPack)' == 'true'" />
         <PackageReference Include="Spectre.Console" Version="0.54.0" Condition="'$(IncludeSpectre)' == 'true'" />
     </ItemGroup>

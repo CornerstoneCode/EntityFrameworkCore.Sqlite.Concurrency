@@ -4,6 +4,7 @@ using System;
 using System.Threading.Tasks;
 using EntityFrameworkCore.Sqlite.Concurrency;
 using EntityFrameworkCore.Sqlite.Concurrency.Models;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
 
@@ -11,15 +12,31 @@ public static class ThreadSafeFactory
 {
     public static TContext CreateContext<TContext>(
         string connectionString,
-        Action<SqliteConcurrencyOptions>? configure = null)
+        Action<SqliteConcurrencyOptions>? configure = null,
+        IServiceProvider? serviceProvider = null)
         where TContext : DbContext
     {
         var optionsBuilder = new DbContextOptionsBuilder<TContext>()
             .UseSqliteWithConcurrency(connectionString, configure);
 
-        return (TContext)Activator.CreateInstance(
-            typeof(TContext),
-            optionsBuilder.Options)!;
+        if (serviceProvider != null)
+        {
+            return ActivatorUtilities.CreateInstance<TContext>(serviceProvider, optionsBuilder.Options);
+        }
+
+        try
+        {
+            return (TContext)Activator.CreateInstance(
+                typeof(TContext),
+                optionsBuilder.Options)!;
+        }
+        catch (MissingMethodException)
+        {
+            // Fallback for contexts with generic options constructor
+            return (TContext)Activator.CreateInstance(
+                typeof(TContext),
+                (DbContextOptions)optionsBuilder.Options)!;
+        }
     }
 
     public static ThreadSafeSqliteContext<TContext> CreateThreadSafeContext<TContext>(
@@ -27,9 +44,6 @@ public static class ThreadSafeFactory
         Action<SqliteConcurrencyOptions>? configure = null)
         where TContext : DbContext
     {
-        var options = new SqliteConcurrencyOptions();
-        configure?.Invoke(options);
-
         var enhancedConnectionString = SqliteConnectionEnhancer
             .GetOptimizedConnectionString(connectionString);
 
@@ -89,11 +103,9 @@ public static class ThreadSafeFactory
         var optionsBuilder = new DbContextOptionsBuilder<TContext>()
             .UseSqlite(sharedConnection);
 
-        // Manually add the interceptor if write queue is enabled
-        if (options.UseWriteQueue)
-        {
-            optionsBuilder.AddInterceptors(new SqliteConcurrencyInterceptor(options));
-        }
+        // Manually add the interceptor for write queue
+        var interceptor = SqliteConnectionEnhancer.GetInterceptor(enhancedConnectionString, options);
+        optionsBuilder.AddInterceptors(interceptor);
 
         return (TContext)Activator.CreateInstance(typeof(TContext), optionsBuilder.Options)!;
     }

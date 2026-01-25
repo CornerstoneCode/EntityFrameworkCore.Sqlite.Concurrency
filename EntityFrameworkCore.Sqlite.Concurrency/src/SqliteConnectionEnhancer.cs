@@ -11,11 +11,34 @@ public static class SqliteConnectionEnhancer
 {
     // Cache optimized connection strings to avoid repeated parsing
     private static readonly ConcurrentDictionary<string, string> _connectionStringCache = new();
+    
+    // Shared locks per connection string to ensure serialization across multiple DbContext instances
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _writeLocks = new();
+    
+    // Shared interceptors per connection string to avoid leaking background tasks
+    private static readonly ConcurrentDictionary<string, SqliteConcurrencyInterceptor> _interceptors = new();
+
+    // Track if current execution flow already holds a write lock to prevent deadlocks with interceptor
+    public static readonly AsyncLocal<bool> IsWriteLockHeld = new();
+
+    private static readonly ConcurrentDictionary<string, object> _pragmaLocks = new();
+
+    private static readonly ConcurrentDictionary<string, bool> _initializedDatabases = new();
 
     public static string GetOptimizedConnectionString(string originalConnectionString)
     {
         // Cache hit - return pre-computed optimized string
         return _connectionStringCache.GetOrAdd(originalConnectionString, ComputeOptimizedConnectionString);
+    }
+
+    public static SemaphoreSlim GetWriteLock(string connectionString)
+    {
+        return _writeLocks.GetOrAdd(connectionString, _ => new SemaphoreSlim(1, 1));
+    }
+
+    public static SqliteConcurrencyInterceptor GetInterceptor(string connectionString, SqliteConcurrencyOptions options)
+    {
+        return _interceptors.GetOrAdd(connectionString, cs => new SqliteConcurrencyInterceptor(options, cs));
     }
 
     private static string ComputeOptimizedConnectionString(string originalConnectionString)
@@ -41,99 +64,37 @@ public static class SqliteConnectionEnhancer
         if (connection is not SqliteConnection sqliteConnection) 
             return;
 
-        // Single optimized command with all PRAGMAs
-        using var command = sqliteConnection.CreateCommand();
-        var pragmas = new StringBuilder(512);
+        var connectionString = sqliteConnection.ConnectionString;
 
-        pragmas.AppendLine($@"
-        PRAGMA journal_mode = WAL;
-        PRAGMA synchronous = NORMAL;
-        PRAGMA busy_timeout = {(int)options.BusyTimeout.TotalMilliseconds};
-        PRAGMA mmap_size = 268435456;
-        PRAGMA temp_store = MEMORY;
-        PRAGMA cache_size = -20000;
-        PRAGMA page_size = 4096;                    -- ✅ Page size set via PRAGMA, not connection string
-        PRAGMA journal_size_limit = 134217728;
-        PRAGMA auto_vacuum = INCREMENTAL;
-        PRAGMA optimize;
-    ");
-
-
-        // Performance enhancements for write-heavy workloads
-        if (options.UseWriteQueue)
+        // 1. Database-scoped Pragmas - Run once per process
+        if (_initializedDatabases.TryAdd(connectionString, true))
         {
-            pragmas.AppendLine(@"
-                PRAGMA locking_mode = NORMAL;             -- Better for concurrent access
-                PRAGMA wal_autocheckpoint = 1000;         -- More frequent checkpoints for write queue
-                PRAGMA secure_delete = OFF;               -- Faster deletes
-            ");
-        }
-
-        // Conditional WAL checkpoint management
-        if (options.EnableWalCheckpointManagement)
-        {
-            pragmas.AppendLine($"PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};");
-            
-            // Aggressive checkpointing for high-write scenarios
-            if (options.WalAutoCheckpoint < 500)
+            var lockObj = _pragmaLocks.GetOrAdd(connectionString, _ => new object());
+            lock (lockObj)
             {
-                pragmas.AppendLine(@"
-                    PRAGMA checkpoint_fullfsync = OFF;    -- Faster checkpoints
-                ");
+                using var initCommand = sqliteConnection.CreateCommand();
+                initCommand.CommandText = $@"
+                    PRAGMA journal_mode = WAL;
+                    PRAGMA page_size = 4096;
+                    PRAGMA auto_vacuum = INCREMENTAL;
+                    PRAGMA journal_size_limit = 134217728;
+                    PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};
+                ";
+                initCommand.ExecuteNonQuery();
             }
         }
 
-        // Execute all PRAGMAs in single round-trip
-        command.CommandText = pragmas.ToString();
-        command.ExecuteNonQuery();
-
-        // Optional: Run VACUUM on first connection if database is new/small
-        TryOptimizeDatabase(sqliteConnection);
-    }
-
-    private static void TryOptimizeDatabase(SqliteConnection connection)
-    {
-        try
-        {
-            // Only run VACUUM on small/new databases (avoid on large production DBs)
-            using var sizeCmd = connection.CreateCommand();
-            sizeCmd.CommandText = "SELECT page_count FROM pragma_page_count();";
-            var pageCount = Convert.ToInt64(sizeCmd.ExecuteScalar());
-            
-            if (pageCount < 10000) // ~40MB database
-            {
-                using var vacuumCmd = connection.CreateCommand();
-                vacuumCmd.CommandText = "VACUUM;";
-                vacuumCmd.ExecuteNonQuery();
-            }
-        }
-        catch
-        {
-            // Silent fail - VACUUM is optional optimization
-        }
-    }
-
-    // New: Method to apply bulk-optimized settings for import operations
-    public static void ApplyBulkOptimizationPragmas(DbConnection connection)
-    {
-        if (connection is not SqliteConnection sqliteConnection) 
-            return;
-
+        // 2. Connection-scoped Pragmas - Run on every open
         using var command = sqliteConnection.CreateCommand();
-        command.CommandText = @"
-            PRAGMA synchronous = OFF;                     -- Maximum speed, risk on crash
-            PRAGMA journal_mode = MEMORY;                 -- Memory journal for bulk import
-            PRAGMA cache_size = -100000;                  -- 100MB cache for large datasets
+        command.CommandText = $@"
+            PRAGMA busy_timeout = {(int)options.BusyTimeout.TotalMilliseconds};
+            PRAGMA mmap_size = 268435456;
             PRAGMA temp_store = MEMORY;
-            PRAGMA mmap_size = 536870912;                 -- 512MB for massive imports
-            PRAGMA page_size = 8192;                      -- Larger pages for sequential writes
+            PRAGMA cache_size = -20000;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA locking_mode = NORMAL;
+            PRAGMA secure_delete = OFF;
         ";
         command.ExecuteNonQuery();
-    }
-
-    // New: Method to revert to normal settings after bulk operations
-    public static void ApplyNormalOperationPragmas(DbConnection connection, SqliteConcurrencyOptions options)
-    {
-        ApplyRuntimePragmas(connection, options); // Revert to standard optimized settings
     }
 }
