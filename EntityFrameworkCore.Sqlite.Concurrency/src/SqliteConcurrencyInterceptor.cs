@@ -15,6 +15,11 @@ public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionI
     private readonly string _connectionString;
 
     /// <summary>
+    /// Gets the concurrency options configured for this interceptor.
+    /// </summary>
+    public SqliteConcurrencyOptions Options => _options;
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="SqliteConcurrencyInterceptor"/> class.
     /// </summary>
     /// <param name="options">The concurrency options.</param>

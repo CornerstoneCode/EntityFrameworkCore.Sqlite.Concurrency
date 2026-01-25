@@ -92,6 +92,7 @@ public static class SqliteConcurrencyExtensions
         {
             await context.AddRangeAsync(entities, cancellationToken);
             await context.SaveChangesAsync(cancellationToken);
+            context.ChangeTracker.Clear();
             return;
         }
 
@@ -114,6 +115,7 @@ public static class SqliteConcurrencyExtensions
             {
                 await context.AddRangeAsync(batch, cancellationToken);
                 await context.SaveChangesAsync(cancellationToken);
+                context.ChangeTracker.Clear();
             }
 
             await transaction.CommitAsync(cancellationToken);

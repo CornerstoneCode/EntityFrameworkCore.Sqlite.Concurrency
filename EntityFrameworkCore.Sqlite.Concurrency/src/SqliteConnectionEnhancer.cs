@@ -57,9 +57,35 @@ public static class SqliteConnectionEnhancer
     /// <param name="connectionString">The connection string.</param>
     /// <param name="options">The concurrency options.</param>
     /// <returns>A <see cref="SqliteConcurrencyInterceptor"/> instance.</returns>
+    /// <exception cref="ArgumentException">Thrown when the provided <paramref name="options"/> do not match the options of an existing interceptor for the same <paramref name="connectionString"/>.</exception>
+    /// <remarks>
+    /// Callers must use consistent options for the same connection string, as interceptors are cached and shared.
+    /// </remarks>
     public static SqliteConcurrencyInterceptor GetInterceptor(string connectionString, SqliteConcurrencyOptions options)
     {
+        if (_interceptors.TryGetValue(connectionString, out var existingInterceptor))
+        {
+            if (!existingInterceptor.Options.Equals(options))
+            {
+                throw new ArgumentException(
+                    $"Mismatched SqliteConcurrencyOptions for connection string. " +
+                    $"Existing options: {FormatOptions(existingInterceptor.Options)}, " +
+                    $"Incoming options: {FormatOptions(options)}. " +
+                    $"Interceptors are shared per connection string and must be configured consistently.",
+                    nameof(options));
+            }
+            return existingInterceptor;
+        }
+
         return _interceptors.GetOrAdd(connectionString, cs => new SqliteConcurrencyInterceptor(options, cs));
+    }
+
+    private static string FormatOptions(SqliteConcurrencyOptions options)
+    {
+        return $"[MaxRetryAttempts={options.MaxRetryAttempts}, " +
+               $"BusyTimeout={options.BusyTimeout}, " +
+               $"CommandTimeout={options.CommandTimeout}, " +
+               $"WalAutoCheckpoint={options.WalAutoCheckpoint}]";
     }
 
     private static string ComputeOptimizedConnectionString(string originalConnectionString)
@@ -98,20 +124,34 @@ public static class SqliteConnectionEnhancer
         var dataSource = builder.DataSource;
 
         // 1. Database-scoped Pragmas - Run once per process
-        if (_initializedDatabases.TryAdd(dataSource, true))
+        if (!_initializedDatabases.ContainsKey(dataSource))
         {
             var lockObj = _pragmaLocks.GetOrAdd(dataSource, _ => new object());
             lock (lockObj)
             {
-                using var initCommand = sqliteConnection.CreateCommand();
-                initCommand.CommandText = $@"
-                    PRAGMA journal_mode = WAL;
-                    PRAGMA page_size = 4096;
-                    PRAGMA auto_vacuum = INCREMENTAL;
-                    PRAGMA journal_size_limit = 134217728;
-                    PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};
-                ";
-                initCommand.ExecuteNonQuery();
+                if (!_initializedDatabases.ContainsKey(dataSource))
+                {
+                    try
+                    {
+                        using var initCommand = sqliteConnection.CreateCommand();
+                        initCommand.CommandText = $@"
+                            PRAGMA journal_mode = WAL;
+                            PRAGMA page_size = 4096;
+                            PRAGMA auto_vacuum = INCREMENTAL;
+                            PRAGMA journal_size_limit = 134217728;
+                            PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};
+                        ";
+                        initCommand.ExecuteNonQuery();
+                        
+                        _initializedDatabases.TryAdd(dataSource, true);
+                    }
+                    catch
+                    {
+                        // Ensure we don't leave it marked as initialized if it failed
+                        _initializedDatabases.TryRemove(dataSource, out _);
+                        throw;
+                    }
+                }
             }
         }
 

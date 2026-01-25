@@ -8,3 +8,7 @@ Sqlite-Concurrency/obj/
 EntityFrameworkCore.Sqlite.Concurrency/obj/
 
 EntityFrameworkCore.Sqlite.Concurrency/bin/
+
+Tests/bin/
+
+Tests/obj/
