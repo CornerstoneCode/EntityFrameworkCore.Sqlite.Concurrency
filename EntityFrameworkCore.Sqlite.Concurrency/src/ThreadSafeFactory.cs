@@ -8,8 +8,19 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
 
+/// <summary>
+/// Factory for creating thread-safe SQLite contexts and options.
+/// </summary>
 public static class ThreadSafeFactory
 {
+    /// <summary>
+    /// Creates a DbContext instance with optimized SQLite concurrency settings.
+    /// </summary>
+    /// <typeparam name="TContext">The type of the DbContext.</typeparam>
+    /// <param name="connectionString">The connection string.</param>
+    /// <param name="configure">An optional action to configure concurrency options.</param>
+    /// <param name="serviceProvider">An optional service provider for dependency injection.</param>
+    /// <returns>A new DbContext instance.</returns>
     public static TContext CreateContext<TContext>(
         string connectionString,
         Action<SqliteConcurrencyOptions>? configure = null,
@@ -39,6 +50,13 @@ public static class ThreadSafeFactory
         }
     }
 
+    /// <summary>
+    /// Creates a <see cref="ThreadSafeSqliteContext{TContext}"/> instance.
+    /// </summary>
+    /// <typeparam name="TContext">The type of the actual DbContext.</typeparam>
+    /// <param name="connectionString">The connection string.</param>
+    /// <param name="configure">An optional action to configure concurrency options.</param>
+    /// <returns>A new <see cref="ThreadSafeSqliteContext{TContext}"/> instance.</returns>
     public static ThreadSafeSqliteContext<TContext> CreateThreadSafeContext<TContext>(
         string connectionString,
         Action<SqliteConcurrencyOptions>? configure = null)
@@ -50,6 +68,13 @@ public static class ThreadSafeFactory
         return new ThreadSafeSqliteContext<TContext>(enhancedConnectionString);
     }
 
+    /// <summary>
+    /// Creates DbContextOptions and the connection string for a concurrent SQLite context.
+    /// </summary>
+    /// <typeparam name="TContext">The type of the DbContext.</typeparam>
+    /// <param name="connectionString">The connection string.</param>
+    /// <param name="configure">An optional action to configure concurrency options.</param>
+    /// <returns>A tuple containing the options and the optimized connection string.</returns>
     public static (DbContextOptions<TContext> Options, string ConnectionString) CreateOptionsAndConnection<TContext>(
         string connectionString,
         Action<SqliteConcurrencyOptions>? configure = null)
@@ -74,6 +99,12 @@ public static class ThreadSafeFactory
         return (optionsBuilder.Options, enhancedConnectionString);
     }
 
+    /// <summary>
+    /// Creates a DbContext instance from existing options.
+    /// </summary>
+    /// <typeparam name="TContext">The type of the DbContext.</typeparam>
+    /// <param name="options">The DbContext options.</param>
+    /// <returns>A new DbContext instance.</returns>
     public static TContext CreateContextFromOptions<TContext>(
         DbContextOptions<TContext> options)
         where TContext : DbContext
@@ -81,6 +112,13 @@ public static class ThreadSafeFactory
         return (TContext)Activator.CreateInstance(typeof(TContext), options)!;
     }
 
+    /// <summary>
+    /// Creates a DbContext instance with a shared (pre-opened) connection.
+    /// </summary>
+    /// <typeparam name="TContext">The type of the DbContext.</typeparam>
+    /// <param name="connectionString">The connection string.</param>
+    /// <param name="configure">An optional action to configure concurrency options.</param>
+    /// <returns>A new DbContext instance.</returns>
     public static async Task<TContext> CreateContextWithSharedConnectionAsync<TContext>(
         string connectionString,
         Action<SqliteConcurrencyOptions>? configure = null)

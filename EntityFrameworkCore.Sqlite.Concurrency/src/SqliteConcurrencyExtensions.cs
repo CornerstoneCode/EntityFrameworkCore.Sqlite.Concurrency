@@ -6,60 +6,55 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
 
+/// <summary>
+/// Extension methods for configuring SQLite concurrency and performance in EF Core.
+/// </summary>
 public static class SqliteConcurrencyExtensions
 {
-        public static DbContextOptionsBuilder UseSqliteWithConcurrency(
-            this DbContextOptionsBuilder optionsBuilder,
-            string connectionString,
-            Action<SqliteConcurrencyOptions>? configure = null)
+    /// <summary>
+    /// Configures the context to use SQLite with optimized concurrency and performance settings.
+    /// </summary>
+    /// <param name="optionsBuilder">The options builder.</param>
+    /// <param name="connectionString">The SQLite connection string.</param>
+    /// <param name="configure">An optional action to configure concurrency options.</param>
+    /// <returns>The options builder.</returns>
+    public static DbContextOptionsBuilder UseSqliteWithConcurrency(
+        this DbContextOptionsBuilder optionsBuilder,
+        string connectionString,
+        Action<SqliteConcurrencyOptions>? configure = null)
+    {
+        var options = new SqliteConcurrencyOptions();
+        configure?.Invoke(options);
+
+        // Get the enhanced connection string
+        var enhancedConnectionString = SqliteConnectionEnhancer
+            .GetOptimizedConnectionString(connectionString);
+        
+        // Use the connection string with EF Core to allow proper pooling
+        optionsBuilder.UseSqlite(enhancedConnectionString, sqliteOptions =>
         {
-            var options = new SqliteConcurrencyOptions();
-            configure?.Invoke(options);
-
-            // Get the enhanced connection string
-            var enhancedConnectionString = SqliteConnectionEnhancer
-                .GetOptimizedConnectionString(connectionString);
-            
-            // Create a configured connection
-            var connection = new SqliteConnection(enhancedConnectionString);
-            
-            // Apply optimizations when connection opens
-            connection.StateChange += (sender, args) =>
-            {
-                if (args.OriginalState == ConnectionState.Closed && 
-                    args.CurrentState == ConnectionState.Open)
-                {
-                    if (sender is SqliteConnection sqliteConnection)
-                    {
-                        // Apply runtime pragmas
-                        SqliteConnectionEnhancer.ApplyRuntimePragmas(sqliteConnection, options);
-                        
-                        // Set busy timeout
-                        SetBusyTimeout(sqliteConnection, options.BusyTimeout);
-                        
-                        // Additional optimizations
-                        ConfigureForWriteQueue(sqliteConnection);
-                        SetWalCheckpoint(sqliteConnection, options.WalAutoCheckpoint);
-                    }
-                }
-            };
-
-            // Use the configured connection with EF Core
-            optionsBuilder.UseSqlite(connection, sqliteOptions =>
-            {
-                // Configure command timeout
-                sqliteOptions.CommandTimeout(options.CommandTimeout);
-            });
-            
-            // Always add interceptors for write queue
-            var interceptor = SqliteConnectionEnhancer.GetInterceptor(enhancedConnectionString, options);
-            optionsBuilder.AddInterceptors(interceptor);
-            
-            return optionsBuilder;
-        }
+            // Configure command timeout
+            sqliteOptions.CommandTimeout(options.CommandTimeout);
+        });
+        
+        // Add interceptors for PRAGMAs, performance, and concurrency
+        var interceptor = SqliteConnectionEnhancer.GetInterceptor(enhancedConnectionString, options);
+        optionsBuilder.AddInterceptors(interceptor);
+        
+        return optionsBuilder;
+    }
  
     
 
+    /// <summary>
+    /// Executes an operation with automatic retry on SQLITE_BUSY errors.
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="context">The database context.</param>
+    /// <param name="operation">The operation to execute.</param>
+    /// <param name="maxRetries">The maximum number of retries.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The result of the operation.</returns>
     public static async Task<T> ExecuteWithRetryAsync<T>(
         this DbContext context,
         Func<DbContext, Task<T>> operation,
@@ -81,6 +76,13 @@ public static class SqliteConcurrencyExtensions
         }
     }
 
+    /// <summary>
+    /// Performs a bulk insert with optimized settings and optional app-level locking.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="context">The database context.</param>
+    /// <param name="entities">The entities to insert.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
     public static async Task BulkInsertOptimizedAsync<T>(
         this DbContext context,
         IEnumerable<T> entities,
@@ -121,29 +123,5 @@ public static class SqliteConcurrencyExtensions
             SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
             writeLock.Release();
         }
-    }
-
-    private static void ConfigureForWriteQueue(SqliteConnection connection)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = @"
-                PRAGMA cache_size = -2000;
-                PRAGMA page_size = 4096;
-            ";
-        command.ExecuteNonQuery();
-    }
-
-    private static void SetBusyTimeout(SqliteConnection connection, TimeSpan timeout)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = $"PRAGMA busy_timeout = {(int)timeout.TotalMilliseconds};";
-        command.ExecuteNonQuery();
-    }
-
-    private static void SetWalCheckpoint(SqliteConnection connection, int checkpointPages)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = $"PRAGMA wal_autocheckpoint = {checkpointPages};";
-        command.ExecuteNonQuery();
     }
 }

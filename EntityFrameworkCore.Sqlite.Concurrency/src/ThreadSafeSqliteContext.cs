@@ -6,19 +6,29 @@ using Microsoft.EntityFrameworkCore.Sqlite.Infrastructure.Internal;
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
 
-public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable where TContext : DbContext
+/// <summary>
+/// A thread-safe SQLite context that provides application-level serialization for writes.
+/// </summary>
+/// <typeparam name="TContext">The type of the actual DbContext.</typeparam>
+public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbContext
 {
     private SemaphoreSlim? _writeLock;
     private readonly string? _connectionString;
-    private SqliteConnection? _persistentConnection;
-    private SqliteTransaction? _currentTransaction;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ThreadSafeSqliteContext{TContext}"/> class.
+    /// </summary>
+    /// <param name="connectionString">The connection string.</param>
     public ThreadSafeSqliteContext(string connectionString)
     {
         _connectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
         _writeLock = SqliteConnectionEnhancer.GetWriteLock(_connectionString);
     }
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ThreadSafeSqliteContext{TContext}"/> class using options.
+    /// </summary>
+    /// <param name="options">The options.</param>
     public ThreadSafeSqliteContext(DbContextOptions options) : base(options)
     {
         // Try to resolve connection string and lock from options
@@ -48,6 +58,7 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
         }
     }
 
+    /// <inheritdoc />
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         if (!optionsBuilder.IsConfigured && _connectionString != null)
@@ -56,6 +67,13 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
         }
     }
 
+    /// <summary>
+    /// Executes a write operation with app-level serialization and automatic transaction management.
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="operation">The operation to execute.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>The result of the operation.</returns>
     public async Task<T> ExecuteWriteAsync<T>(
         Func<TContext, Task<T>> operation,
         CancellationToken ct = default)
@@ -77,8 +95,7 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
 
             try
             {
-                // Use explicit transaction. The interceptor will bypass queuing 
-                // because IsWriteLockHeld is true.
+                // Use explicit transaction. The interceptor will ensure BEGIN IMMEDIATE.
                 await using var transaction = await Database.BeginTransactionAsync(
                     System.Data.IsolationLevel.Serializable, ct);
 
@@ -111,6 +128,11 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
         }
     }
 
+    /// <summary>
+    /// Executes a write operation with app-level serialization and automatic transaction management.
+    /// </summary>
+    /// <param name="operation">The operation to execute.</param>
+    /// <param name="ct">The cancellation token.</param>
     public async Task ExecuteWriteAsync(
         Func<TContext, Task> operation,
         CancellationToken ct = default)
@@ -122,7 +144,13 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
         }, ct);
     }
 
-    // Fast parallel reads - no locking needed
+    /// <summary>
+    /// Executes a read operation. No locking is performed.
+    /// </summary>
+    /// <typeparam name="T">The result type.</typeparam>
+    /// <param name="operation">The operation to execute.</param>
+    /// <param name="ct">The cancellation token.</param>
+    /// <returns>The result of the operation.</returns>
     public async Task<T> ExecuteReadAsync<T>(
         Func<TContext, Task<T>> operation,
         CancellationToken ct = default)
@@ -130,6 +158,12 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
         return await operation((TContext)(object)this);
     }
 
+    /// <summary>
+    /// Performs a bulk insert with optimized settings and app-level locking.
+    /// </summary>
+    /// <typeparam name="T">The entity type.</typeparam>
+    /// <param name="entities">The entities to insert.</param>
+    /// <param name="ct">The cancellation token.</param>
     public async Task BulkInsertSafeAsync<T>(
         IList<T> entities,
         CancellationToken ct = default) where T : class
@@ -164,21 +198,9 @@ public class ThreadSafeSqliteContext<TContext> : DbContext, IAsyncDisposable whe
         }
     }
 
+    /// <inheritdoc />
     public override async ValueTask DisposeAsync()
     {
-        if (_currentTransaction != null)
-        {
-            await _currentTransaction.RollbackAsync();
-            _currentTransaction = null;
-        }
-
-        if (_persistentConnection != null)
-        {
-            await _persistentConnection.CloseAsync();
-            await _persistentConnection.DisposeAsync();
-            _persistentConnection = null;
-        }
-
         await base.DisposeAsync();
     }
 }

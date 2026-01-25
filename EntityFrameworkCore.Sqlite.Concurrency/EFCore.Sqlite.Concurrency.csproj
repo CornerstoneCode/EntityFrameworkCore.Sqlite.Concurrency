@@ -69,16 +69,20 @@ Get started in one line. Stop compromising on SQLite reliability and speed.
         <!-- Licensing & Documentation (Mandatory for Trust) -->
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageIcon>res\logo.png</PackageIcon>
+        <PackageIcon>logo.png</PackageIcon>
         <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
 
         <!-- Build & Packaging Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <IsPackable>true</IsPackable>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
         <!-- Debug Symbol Configuration -->
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        
+        <!-- Deterministic Builds for CI -->
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
     <!-- Dependencies -->
@@ -87,7 +91,6 @@ Get started in one line. Stop compromising on SQLite reliability and speed.
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
-        <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
         <!-- SourceLink for debugging support -->
         <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
     </ItemGroup>
@@ -101,6 +104,6 @@ Get started in one line. Stop compromising on SQLite reliability and speed.
     <!-- Packaged Files -->
     <ItemGroup>
         <None Include="..\README.md" Pack="true" PackagePath="\" />
-        <None Include="res\logo.png" Pack="true" PackagePath="res\" />
+        <None Include="res\logo.png" Pack="true" PackagePath="\" />
     </ItemGroup>
 </Project>

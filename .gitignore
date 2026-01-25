@@ -6,3 +6,5 @@ Sqlite-Concurrency/obj/
 .idea/
 
 EntityFrameworkCore.Sqlite.Concurrency/obj/
+
+EntityFrameworkCore.Sqlite.Concurrency/bin/
