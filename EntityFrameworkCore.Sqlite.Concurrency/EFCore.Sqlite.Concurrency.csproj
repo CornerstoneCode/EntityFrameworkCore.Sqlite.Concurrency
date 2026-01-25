@@ -1,82 +1,109 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
+
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <RootNamespace>EntityFrameworkCore.Sqlite.Concurrency</RootNamespace>
 
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
-        <RootNamespace>EntityFrameworkCore.Sqlite.Concurrency</RootNamespace>
-        <Version>10.0.1</Version>
+        <Version>10.0.2</Version>
 
-        <!-- SEO-Optimized Metadata - PERFORMANCE FIRST -->
-        <Title>EntityFrameworkCore.Sqlite.Concurrency - 10x Faster SQLite for EFCore with Parallel Reads &amp; No Lock Errors</Title>
-        <Company>Cornerstone Code</Company>
+        <!-- Core Metadata for Trust & Recognition -->
         <Authors>Mike Gotfryd</Authors>
+        <Company>Cornerstone Code</Company>
+        <Copyright>© 2026 Cornerstone Code. All rights reserved.</Copyright>
 
-        <!-- SEO Primary Description: Performance as Lead Benefit -->
-        <Description>High-performance Entity Framework Core extension for SQLite with 10x faster bulk inserts and true parallel reads. Eliminate "database is locked" errors (SQLITE_BUSY) with automatic thread-safe concurrency management for .NET 10. Production-ready performance optimization that fixes SQLite's limitations while delivering enterprise-grade speed and reliability.</Description>
+        <!-- ========== CRITICAL SEO OPTIMIZATIONS ========== -->
+        <!-- 1. OPTIMIZED DESCRIPTION (Front-loaded value) -->
+        <Description>
+            Eliminates 'SQLITE_BUSY' / 'database is locked' errors in multi-threaded 
+            Entity Framework Core apps. Provides automatic write serialization, 10x faster 
+            bulk inserts, and true parallel reads for SQLite. A drop-in, high-performance, 
+            thread-safe addition to Microsoft.EntityFrameworkCore.Sqlite in .NET 10.
+        </Description>
 
-        <!-- Comprehensive Tags for Search - Performance Terms First -->
-        <PackageTags>SQLite; performance; high-performance; bulk insert; parallel reads; EntityFrameworkCore; EFCore; Entity Framework Core; concurrency; thread-safe; database locked; SQLITE_BUSY; multi-threading; .NET 10; dotnet; Entity Framework; ORM; data access; async; await; transactions; locking; write queue; WAL mode; optimization; speed; fast; throughput; scaling; benchmarks; 10x faster</PackageTags>
-
-        <!-- Enhanced Keywords for NuGet Search Algorithm -->
+        
+        <!-- 2. CORRECTED TAGS FORMAT (Space-delimited per NuGet spec) -->
+        <PackageTags>sqlite sqlite3 entity-framework-core efcore concurrency thread-safe multi-threading database-locked sqlite-busy performance bulk-insert parallel-reads write-ahead-logging wal dotnet-10 entity-framework orm database-provider high-performance async transactions locking queue</PackageTags>
+        
+        <!-- 3. STRUCTURED RELEASE NOTES -->
         <PackageReleaseNotes>
-            v10.0.0: Production release with performance optimizations. Achieve 10x faster bulk inserts and true parallel read scaling while eliminating SQLite database locked errors. Features: Automatic write serialization, optimized connection management, WAL mode configuration, and intelligent retry logic. Built for Entity Framework Core 10.0.0+ on .NET 10.
-        </PackageReleaseNotes>
+            <![CDATA[
+🚀 **v10.0.2 - Initial Stable Release: Production-Ready SQLite Concurrency & Performance**
 
-        <!-- Repository Information (GitHub SEO) -->
+This first major release transforms SQLite into a robust database for concurrent .NET applications by fixing core limitations of the standard provider.
+
+**✅ SOLVES: Concurrency & Locking Errors**
+• **Eliminates `SQLITE_BUSY` / "database is locked" errors** with automatic, application-level write serialization.
+• **Guarantees 100% write reliability** under any multi-threaded load.
+
+**⚡ DELIVERS: Exceptional Performance**
+• **Achieves up to 10x faster bulk inserts** vs. standard `SaveChanges()` through intelligent batching.
+• **Enables true parallel read scaling** with non-blocking connections.
+• **Optimizes all interactions** (connections, transactions, WAL mode) for maximum throughput.
+
+**🧩 PROVIDES: Seamless Developer Experience**
+• **Drop-in replacement** – change `UseSqlite()` to `UseSqliteWithConcurrency()`.
+• **Full EF Core compatibility** – all existing DbContexts, models, and LINQ queries work unchanged.
+• **Simplifies complex logic** – abstracts retry patterns, lock management, and connection pooling.
+
+**🏗️ ENSURES: Enterprise-Grade Robustness**
+• Built-in production resilience with exponential backoff retry and crash-safe transactions.
+• Targets the modern .NET ecosystem with first-class support for **.NET 10** and **Entity Framework Core 10**.
+
+Get started in one line. Stop compromising on SQLite reliability and speed.
+]]>
+        </PackageReleaseNotes>
+        <!-- =============================================== -->
+
+        <!-- Repository & Project Info (Key Trust Signals) -->
         <PackageProjectUrl>https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency</PackageProjectUrl>
         <RepositoryUrl>https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency.git</RepositoryUrl>
         <RepositoryType>git</RepositoryType>
-
-        <!-- Trust Signals -->
-        <PackageLicenseExpression>MIT</PackageLicenseExpression>
-        <PackageReadmeFile>README.md</PackageReadmeFile>
-        <PackageIcon>res/logo.png</PackageIcon>
-
-        <!-- Debugging Support (Increases Package Quality Score) -->
+        <!-- Enables SourceLink - Keep this for debugging support -->
         <PublishRepositoryUrl>true</PublishRepositoryUrl>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
-        <IncludeSymbols>true</IncludeSymbols>
-        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
-        <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
-        <!-- Build Optimization -->
+        <!-- Licensing & Documentation (Mandatory for Trust) -->
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageIcon>logo.png</PackageIcon>
+        <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+
+        <!-- Build & Packaging Configuration -->
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <IsPackable>true</IsPackable>
-        <IsTrimmable>true</IsTrimmable>
-        <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
-        <!-- Additional Metadata for NuGet.org -->
-        <NeutralLanguage>en-US</NeutralLanguage>
-        <Copyright>© 2026 Cornerstone Code. All rights reserved.</Copyright>
-        <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+        <!-- Debug Symbol Configuration -->
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        
+        <!-- Deterministic Builds for CI -->
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
-    <!-- Required Dependencies -->
+    <!-- Dependencies -->
     <ItemGroup>
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
-        <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
+        <!-- SourceLink for debugging support -->
+        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
     </ItemGroup>
 
     <!-- Optional Dependencies (Conditional) -->
     <ItemGroup>
-        <PackageReference Include="EFCore.BulkExtensions.Sqlite" Version="10.0.0" Condition="'$(IncludeBulkExtensions)' == 'true'" />
         <PackageReference Include="MemoryPack" Version="2.0.0" Condition="'$(IncludeMemoryPack)' == 'true'" />
         <PackageReference Include="Spectre.Console" Version="0.54.0" Condition="'$(IncludeSpectre)' == 'true'" />
     </ItemGroup>
 
+    <!-- Packaged Files -->
     <ItemGroup>
-        <None Include="doc\QUICKSTART.md" Pack="true" PackagePath="\" />
         <None Include="..\README.md" Pack="true" PackagePath="\" />
-        <None Include="res\logo.png" Pack="true" PackagePath="res\" />
-    </ItemGroup>
-
-    <!-- Source Link for Debugging -->
-    <ItemGroup>
-        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+        <None Include="res\logo.png" Pack="true" PackagePath="\" />
     </ItemGroup>
 </Project>

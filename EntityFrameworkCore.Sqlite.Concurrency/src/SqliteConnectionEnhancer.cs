@@ -1,73 +1,171 @@
+using System.Collections.Concurrent;
 using System.Data.Common;
+using System.Text;
 using EntityFrameworkCore.Sqlite.Concurrency.Models;
 using Microsoft.Data.Sqlite;
 
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
 
+/// <summary>
+/// Provides utility methods for enhancing SQLite connections with optimized settings.
+/// </summary>
 public static class SqliteConnectionEnhancer
 {
+    // Cache optimized connection strings to avoid repeated parsing
+    private static readonly ConcurrentDictionary<string, string> _connectionStringCache = new();
+    
+    // Shared locks per connection string to ensure serialization across multiple DbContext instances
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _writeLocks = new();
+    
+    // Shared interceptors per connection string to avoid leaking background tasks
+    private static readonly ConcurrentDictionary<string, SqliteConcurrencyInterceptor> _interceptors = new();
+
+    /// <summary>
+    /// Tracks if the current execution flow already holds a write lock to prevent deadlocks.
+    /// </summary>
+    public static readonly AsyncLocal<bool> IsWriteLockHeld = new();
+
+    private static readonly ConcurrentDictionary<string, object> _pragmaLocks = new();
+
+    private static readonly ConcurrentDictionary<string, bool> _initializedDatabases = new();
+
+    /// <summary>
+    /// Gets an optimized version of the provided connection string.
+    /// </summary>
+    /// <param name="originalConnectionString">The original connection string.</param>
+    /// <returns>An optimized connection string.</returns>
     public static string GetOptimizedConnectionString(string originalConnectionString)
     {
-        var builder = new SqliteConnectionStringBuilder(originalConnectionString);
+        // Cache hit - return pre-computed optimized string
+        return _connectionStringCache.GetOrAdd(originalConnectionString, ComputeOptimizedConnectionString);
+    }
 
-        // Set all critical parameters for thread-safe operations
-        var optimizations = new Dictionary<string, string>
-        {
-            ["Journal Mode"] = "WAL", // MUST use string key, not property
-            ["Pooling"] = "False",
-            ["Cache"] = "Shared",
-            ["Synchronous"] = "NORMAL",
-            ["Foreign Keys"] = "True",
-            ["Recursive Triggers"] = "True"
-        };
+    /// <summary>
+    /// Gets a shared write lock for the specified connection string.
+    /// </summary>
+    /// <param name="connectionString">The connection string.</param>
+    /// <returns>A semaphore used for write synchronization.</returns>
+    public static SemaphoreSlim GetWriteLock(string connectionString)
+    {
+        return _writeLocks.GetOrAdd(connectionString, _ => new SemaphoreSlim(1, 1));
+    }
 
-        foreach (var opt in optimizations)
+    /// <summary>
+    /// Gets or creates a concurrency interceptor for the specified connection string.
+    /// </summary>
+    /// <param name="connectionString">The connection string.</param>
+    /// <param name="options">The concurrency options.</param>
+    /// <returns>A <see cref="SqliteConcurrencyInterceptor"/> instance.</returns>
+    /// <exception cref="ArgumentException">Thrown when the provided <paramref name="options"/> do not match the options of an existing interceptor for the same <paramref name="connectionString"/>.</exception>
+    /// <remarks>
+    /// Callers must use consistent options for the same connection string, as interceptors are cached and shared.
+    /// </remarks>
+    public static SqliteConcurrencyInterceptor GetInterceptor(string connectionString, SqliteConcurrencyOptions options)
+    {
+        if (_interceptors.TryGetValue(connectionString, out var existingInterceptor))
         {
-            if (!builder.ContainsKey(opt.Key))
+            if (!existingInterceptor.Options.Equals(options))
             {
-                builder[opt.Key] = opt.Value; // Use string indexer
+                throw new ArgumentException(
+                    $"Mismatched SqliteConcurrencyOptions for connection string. " +
+                    $"Existing options: {FormatOptions(existingInterceptor.Options)}, " +
+                    $"Incoming options: {FormatOptions(options)}. " +
+                    $"Interceptors are shared per connection string and must be configured consistently.",
+                    nameof(options));
             }
+            return existingInterceptor;
         }
+
+        return _interceptors.GetOrAdd(connectionString, cs => new SqliteConcurrencyInterceptor(options, cs));
+    }
+
+    private static string FormatOptions(SqliteConcurrencyOptions options)
+    {
+        return $"[MaxRetryAttempts={options.MaxRetryAttempts}, " +
+               $"BusyTimeout={options.BusyTimeout}, " +
+               $"CommandTimeout={options.CommandTimeout}, " +
+               $"WalAutoCheckpoint={options.WalAutoCheckpoint}]";
+    }
+
+    private static string ComputeOptimizedConnectionString(string originalConnectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(originalConnectionString)
+        {
+            Pooling = true,
+            ForeignKeys = true,
+            RecursiveTriggers = true,
+            Mode = SqliteOpenMode.ReadWriteCreate  
+        }; 
 
         return builder.ToString();
     }
 
+    /// <summary>
+    /// Applies runtime PRAGMAs to the specified connection using default options.
+    /// </summary>
+    /// <param name="connection">The database connection.</param>
     public static void ApplyRuntimePragmas(DbConnection connection)
     {
-        if (connection is SqliteConnection sqliteConnection)
-        {
-            using var command = sqliteConnection.CreateCommand();
-            command.CommandText = @"
-                    PRAGMA busy_timeout = 30000;
-                    PRAGMA journal_size_limit = 67108864; -- 64MB
-                    PRAGMA mmap_size = 134217728; -- 128MB
-                    PRAGMA temp_store = MEMORY;
-                    PRAGMA auto_vacuum = INCREMENTAL;
-                ";
-            command.ExecuteNonQuery();
-        }
+        ApplyRuntimePragmas(connection, new SqliteConcurrencyOptions());
     }
 
+    /// <summary>
+    /// Applies runtime PRAGMAs to the specified connection using the provided options.
+    /// </summary>
+    /// <param name="connection">The database connection.</param>
+    /// <param name="options">The concurrency options.</param>
     public static void ApplyRuntimePragmas(DbConnection connection, SqliteConcurrencyOptions options)
     {
-        if (connection is SqliteConnection sqliteConnection)
+        if (connection is not SqliteConnection sqliteConnection) 
+            return;
+
+        var builder = new SqliteConnectionStringBuilder(sqliteConnection.ConnectionString);
+        var dataSource = builder.DataSource;
+
+        // 1. Database-scoped Pragmas - Run once per process
+        if (!_initializedDatabases.ContainsKey(dataSource))
         {
-            using var command = sqliteConnection.CreateCommand();
-            command.CommandText = $@"
-                    PRAGMA busy_timeout = {(int)options.BusyTimeout.TotalMilliseconds};
-                    PRAGMA journal_size_limit = 67108864;
-                    PRAGMA mmap_size = 134217728;
-                    PRAGMA temp_store = MEMORY;
-                    PRAGMA auto_vacuum = INCREMENTAL;
-                ";
-
-            if (options.EnableWalCheckpointManagement)
+            var lockObj = _pragmaLocks.GetOrAdd(dataSource, _ => new object());
+            lock (lockObj)
             {
-                command.CommandText += $"\nPRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};";
+                if (!_initializedDatabases.ContainsKey(dataSource))
+                {
+                    try
+                    {
+                        using var initCommand = sqliteConnection.CreateCommand();
+                        initCommand.CommandText = $@"
+                            PRAGMA journal_mode = WAL;
+                            PRAGMA page_size = 4096;
+                            PRAGMA auto_vacuum = INCREMENTAL;
+                            PRAGMA journal_size_limit = 134217728;
+                            PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};
+                        ";
+                        initCommand.ExecuteNonQuery();
+                        
+                        _initializedDatabases.TryAdd(dataSource, true);
+                    }
+                    catch
+                    {
+                        // Ensure we don't leave it marked as initialized if it failed
+                        _initializedDatabases.TryRemove(dataSource, out _);
+                        throw;
+                    }
+                }
             }
-
-            command.ExecuteNonQuery();
         }
+
+        // 2. Connection-scoped Pragmas - Run on every open
+        using var command = sqliteConnection.CreateCommand();
+        command.CommandText = $@"
+            PRAGMA busy_timeout = {(int)options.BusyTimeout.TotalMilliseconds};
+            PRAGMA mmap_size = 268435456;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = -20000;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA locking_mode = NORMAL;
+            PRAGMA secure_delete = OFF;
+        ";
+        command.ExecuteNonQuery();
     }
 }
