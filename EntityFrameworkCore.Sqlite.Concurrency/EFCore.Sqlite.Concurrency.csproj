@@ -11,7 +11,7 @@
 
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
-        <Version>10.0.2</Version>
+        <Version>10.0.3</Version>
 
         <!-- Core Metadata for Trust & Recognition -->
         <Authors>Mike Gotfryd</Authors>
@@ -34,29 +34,39 @@
         <!-- 3. STRUCTURED RELEASE NOTES -->
         <PackageReleaseNotes>
             <![CDATA[
-🚀 **v10.0.2 - Initial Stable Release: Production-Ready SQLite Concurrency & Performance**
+v10.0.3 — SQLITE_BUSY_SNAPSHOT fix, IDbContextFactory support, structured logging
 
-This first major release transforms SQLite into a robust database for concurrent .NET applications by fixing core limitations of the standard provider.
+BUGS FIXED
+• SQLITE_BUSY_SNAPSHOT (extended code 517) now correctly restarts the full operation lambda
+  instead of retrying the same statement — the only correct fix for a stale WAL read snapshot.
+• Exponential backoff now uses full jitter ([baseDelay, 2×baseDelay]) to prevent thundering
+  herd when multiple threads contend simultaneously.
+• Cache=Shared in the connection string now throws ArgumentException at startup — it silently
+  broke WAL mode semantics in prior versions.
+• Invalid SqliteConcurrencyOptions values (MaxRetryAttempts ≤ 0, negative BusyTimeout, etc.)
+  now throw ArgumentOutOfRangeException at startup instead of silently misbehaving.
 
-**✅ SOLVES: Concurrency & Locking Errors**
-• **Eliminates `SQLITE_BUSY` / "database is locked" errors** with automatic, application-level write serialization.
-• **Guarantees 100% write reliability** under any multi-threaded load.
+NEW FEATURES
+• AddConcurrentSqliteDbContextFactory<T> — registers IDbContextFactory<T> with all concurrency
+  settings. Use this for Task.WhenAll, background services, Channel<T> consumers, and any
+  workload that creates concurrent database operations. DbContext is not thread-safe; the factory
+  pattern gives each concurrent flow its own independent instance.
+• Structured logging: pass ILoggerFactory (or let DI resolve it) to get Warning logs for
+  SQLITE_BUSY/SQLITE_BUSY_SNAPSHOT events, Error logs for SQLITE_LOCKED, and Debug logs for
+  BEGIN IMMEDIATE upgrades — all through your existing logging pipeline.
+• GetWalCheckpointStatusAsync — runs PRAGMA wal_checkpoint(PASSIVE) and returns a typed
+  WalCheckpointStatus with IsBusy, TotalWalFrames, CheckpointedFrames, and CheckpointProgress.
+  Call periodically to detect long-running readers blocking WAL reclamation before it degrades
+  read performance.
+• TryReleaseMigrationLockAsync — detects and optionally clears a stale __EFMigrationsLock
+  row left behind by a crashed migration process. Prevents indefinite blocking on Database.Migrate()
+  in multi-instance deployments.
+• SynchronousMode option — configures PRAGMA synchronous (Off / Normal / Full / Extra).
+  Default remains Normal (recommended for WAL: safe after app crash, fast writes).
+• UpgradeTransactionsToImmediate option — opt out of the BEGIN → BEGIN IMMEDIATE rewrite
+  if you manage write transactions explicitly yourself. Default remains true.
 
-**⚡ DELIVERS: Exceptional Performance**
-• **Achieves up to 10x faster bulk inserts** vs. standard `SaveChanges()` through intelligent batching.
-• **Enables true parallel read scaling** with non-blocking connections.
-• **Optimizes all interactions** (connections, transactions, WAL mode) for maximum throughput.
-
-**🧩 PROVIDES: Seamless Developer Experience**
-• **Drop-in replacement** – change `UseSqlite()` to `UseSqliteWithConcurrency()`.
-• **Full EF Core compatibility** – all existing DbContexts, models, and LINQ queries work unchanged.
-• **Simplifies complex logic** – abstracts retry patterns, lock management, and connection pooling.
-
-**🏗️ ENSURES: Enterprise-Grade Robustness**
-• Built-in production resilience with exponential backoff retry and crash-safe transactions.
-• Targets the modern .NET ecosystem with first-class support for **.NET 10** and **Entity Framework Core 10**.
-
-Get started in one line. Stop compromising on SQLite reliability and speed.
+NO BREAKING CHANGES — all existing call sites compile and behave correctly without modification.
 ]]>
         </PackageReleaseNotes>
         <!-- =============================================== -->
