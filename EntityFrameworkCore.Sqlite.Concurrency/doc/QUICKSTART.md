@@ -34,28 +34,61 @@ public class BlogDbContext : DbContext
 }
 ```
 
-### 2. Configure with One Line of Code
+### 2. Configure in Program.cs
 
-In your `Program.cs` or startup configuration:
+#### Single-threaded / request-scoped use (ASP.NET Core controllers, Razor Pages, Blazor Server)
+
+One context is created per HTTP request through the DI scope. ASP.NET Core processes requests one thread at a time per scope, so sharing a context here is safe.
 
 ```csharp
-// Simple configuration
-builder.Services.AddDbContext<BlogDbContext>(options =>
-    options.UseSqliteWithConcurrency("Data Source=blog.db"));
+builder.Services.AddConcurrentSqliteDbContext<BlogDbContext>("Data Source=blog.db");
 ```
 
 Or with custom options:
 
 ```csharp
-builder.Services.AddDbContext<BlogDbContext>(options =>
-    options.UseSqliteWithConcurrency(
-        "Data Source=blog.db",
-        sqliteOptions =>
-        {
-            sqliteOptions.BusyTimeout = TimeSpan.FromSeconds(30);
-            sqliteOptions.MaxRetryAttempts = 5;
-        }));
+builder.Services.AddConcurrentSqliteDbContext<BlogDbContext>(
+    "Data Source=blog.db",
+    options =>
+    {
+        options.BusyTimeout = TimeSpan.FromSeconds(30);
+        options.MaxRetryAttempts = 5;
+    });
 ```
+
+#### Concurrent use (background workers, Task.WhenAll, channels, hosted services)
+
+A `DbContext` is **not thread-safe** — it must not be shared across concurrent operations. Use `IDbContextFactory<T>` instead. Each concurrent flow calls `CreateDbContext()` to get its own independent instance.
+
+```csharp
+builder.Services.AddConcurrentSqliteDbContextFactory<BlogDbContext>("Data Source=blog.db");
+```
+
+Then inject and use the factory:
+
+```csharp
+public class PostImportService
+{
+    private readonly IDbContextFactory<BlogDbContext> _factory;
+
+    public PostImportService(IDbContextFactory<BlogDbContext> factory)
+        => _factory = factory;
+
+    public async Task ImportPostsAsync(IEnumerable<Post> posts, CancellationToken ct)
+    {
+        var tasks = posts.Select(async post =>
+        {
+            await using var db = _factory.CreateDbContext();
+            db.Posts.Add(post);
+            await db.SaveChangesAsync(ct);
+        });
+
+        await Task.WhenAll(tasks); // ✅ Each task has its own context — no EF thread-safety violation
+    }
+}
+```
+
+> **Note:** `Cache=Shared` in the connection string is incompatible with WAL mode and will throw an `ArgumentException` at startup. Use the default connection string format (`Data Source=blog.db`) — connection pooling is enabled automatically.
 
 ## Basic Usage Examples
 
@@ -167,45 +200,60 @@ public class ImportService
 Imagine a scenario where multiple background workers are processing tasks:
 
 ```csharp
-// WITHOUT ThreadSafeEFCore.SQLite - This would fail with "database is locked"
+// ❌ WRONG — sharing one DbContext across concurrent tasks
+//    EF Core will throw InvalidOperationException about concurrent usage,
+//    and SQLite returns "database is locked" for simultaneous writers.
 public class TaskProcessor
 {
+    private readonly AppDbContext _context; // shared — unsafe for concurrent use
+
     public async Task ProcessTasksConcurrently()
     {
         var tasks = Enumerable.Range(1, 10)
             .Select(i => ProcessSingleTaskAsync(i));
-            
-        await Task.WhenAll(tasks); // 💥 Database locked errors!
+
+        await Task.WhenAll(tasks); // 💥 EF thread-safety violation + database locked
+    }
+
+    private async Task ProcessSingleTaskAsync(int taskId)
+    {
+        _context.TaskResults.Add(new TaskResult { TaskId = taskId });
+        await _context.SaveChangesAsync(); // 💥 concurrent SaveChanges on one context
     }
 }
 
-// WITH ThreadSafeEFCore.SQLite - Just works!
+// ✅ CORRECT — one context per concurrent flow via IDbContextFactory
+//    Register with: builder.Services.AddConcurrentSqliteDbContextFactory<AppDbContext>("Data Source=app.db");
 public class TaskProcessor
 {
-    private readonly AppDbContext _context;
-    
+    private readonly IDbContextFactory<AppDbContext> _factory;
+
+    public TaskProcessor(IDbContextFactory<AppDbContext> factory)
+        => _factory = factory;
+
     public async Task ProcessTasksConcurrently()
     {
         var tasks = Enumerable.Range(1, 10)
             .Select(i => ProcessSingleTaskAsync(i));
-            
+
         await Task.WhenAll(tasks); // ✅ All tasks complete successfully
     }
-    
+
     private async Task ProcessSingleTaskAsync(int taskId)
     {
-        // Each task writes to the database
         var result = await PerformWorkAsync(taskId);
-        
-        // The package automatically queues these writes
-        _context.TaskResults.Add(new TaskResult
+
+        // Each concurrent flow creates and disposes its own context.
+        // ThreadSafeEFCore.SQLite serializes the actual writes at the SQLite level.
+        await using var db = _factory.CreateDbContext();
+        db.TaskResults.Add(new TaskResult
         {
             TaskId = taskId,
             Result = result,
             CompletedAt = DateTime.UtcNow
         });
-        
-        await _context.SaveChangesAsync();
+
+        await db.SaveChangesAsync(); // ✅ Thread-safe — no shared context, writes queued automatically
     }
 }
 ```
@@ -259,13 +307,40 @@ public async Task UpdatePostWithRetryAsync(int postId, string newContent)
 | `SynchronousMode` | `Normal` | Durability vs. performance trade-off (`PRAGMA synchronous`). `Normal` is recommended for WAL mode: safe against application crashes; a power loss or OS crash may roll back the last commit(s) not yet checkpointed. Use `Full` or `Extra` for stronger durability guarantees. |
 | `UpgradeTransactionsToImmediate` | `true` | Rewrites `BEGIN`/`BEGIN TRANSACTION` to `BEGIN IMMEDIATE` to prevent `SQLITE_BUSY_SNAPSHOT` mid-transaction. Disable only if you manage write transactions explicitly yourself. |
 
+## Multi-Instance Deployments and Migration Locks
+
+EF Core uses a `__EFMigrationsLock` table to serialize concurrent migrations. If a migration process crashes after acquiring the lock but before releasing it, subsequent calls to `Database.Migrate()` will block indefinitely.
+
+**Recommended approach:** run migrations once as a controlled startup step rather than calling `Database.Migrate()` from every app instance simultaneously.
+
+If a stale lock does occur, use the built-in helper to detect and clear it:
+
+```csharp
+// In your startup or migration runner:
+using var db = factory.CreateDbContext();
+var connection = db.Database.GetDbConnection();
+await connection.OpenAsync();
+
+var wasStale = await SqliteConnectionEnhancer.TryReleaseMigrationLockAsync(connection);
+if (wasStale)
+    logger.LogWarning("Stale EF migration lock found and released. Proceeding with migration.");
+
+await db.Database.MigrateAsync();
+```
+
+Pass `release: false` to check for a stale lock without removing it (useful for diagnostics).
+
+> **Network filesystem warning:** SQLite WAL mode requires all connections to be on the **same physical host**. Do not point the database at an NFS, SMB, or other network-mounted path. If your app runs across multiple machines or containers, use a client/server database instead.
+
 ## Best Practices
 
-1. **Use Dependency Injection** when possible for automatic context management
-2. **Keep write transactions short** - queue your data and write quickly
-3. **Use `BulkInsertOptimizedAsync`** for importing large amounts of data
-4. **Enable WAL mode** (already done by default) for better concurrency
-5. **Monitor performance** with the built-in diagnostics when needed
+1. **Use `IDbContextFactory<T>` for concurrent workloads** — inject the factory and call `CreateDbContext()` per concurrent operation; never share a single `DbContext` instance across concurrent tasks
+2. **Use `AddConcurrentSqliteDbContext<T>` for request-scoped workloads** — standard ASP.NET Core controllers and Razor Pages where one request = one thread = one context
+3. **Keep write transactions short** — acquire the write slot, write, commit; long-held write transactions block all other writers
+4. **Use `BulkInsertOptimizedAsync`** for importing large amounts of data
+5. **WAL mode is enabled automatically** — do not add `Cache=Shared` to the connection string; it is incompatible with WAL
+6. **Run migrations from a single process** — avoid calling `Database.Migrate()` concurrently from multiple instances; use `TryReleaseMigrationLockAsync` if a stale lock occurs
+7. **Stay on local disk** — WAL mode does not work over network filesystems (NFS, SMB); use a client/server database for multi-host deployments
 
 ## What Makes It Different
 
