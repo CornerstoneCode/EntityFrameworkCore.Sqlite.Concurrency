@@ -5,9 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-5E2B97?style=flat-square)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10-2A4F7B?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
 
-## 🚀 Solve SQLite Concurrency & Performance
+## Solve SQLite Concurrency & Performance in EF Core
 
-Tired of `"database is locked"` (`SQLITE_BUSY`) errors in your multi-threaded .NET 10 app? Need to insert data faster than the standard `SaveChanges()` allows?
+Tired of `"database is locked"` (`SQLITE_BUSY`) errors in your multi-threaded .NET app? Need to insert data faster than the standard `SaveChanges()` allows?
 
 **EntityFrameworkCore.Sqlite.Concurrency** is a high-performance add-on to `Microsoft.EntityFrameworkCore.Sqlite` that adds **automatic transaction upgrades**, **write serialization**, and **production-ready optimizations**, making SQLite robust and fast for enterprise applications.
 
@@ -19,7 +19,7 @@ options.UseSqlite("Data Source=app.db");
 // With this:
 options.UseSqliteWithConcurrency("Data Source=app.db");
 ```
-Guaranteed 100% write reliability and up to 10x faster bulk operations.
+Eliminates write contention errors and provides up to 10x faster bulk operations.
 
 ---
 
@@ -27,36 +27,37 @@ Guaranteed 100% write reliability and up to 10x faster bulk operations.
 
 | Problem with Standard EF Core SQLite | Our Solution & Benefit |
 | :--- | :--- |
-| **❌ Concurrency Errors:** `SQLITE_BUSY` / `database is locked` under load. | **✅ Automatic Write Serialization:** BEGIN IMMEDIATE transactions and optional app-level locking eliminate locking errors. |
+| **❌ Concurrency Errors:** `SQLITE_BUSY` / `database is locked` under load. | **✅ Automatic Write Serialization:** `BEGIN IMMEDIATE` transactions and app-level locking eliminate locking errors. |
 | **❌ Slow Bulk Inserts:** Linear `SaveChanges()` performance. | **✅ Intelligent Batching:** ~10x faster bulk inserts with optimized transactions and PRAGMAs. |
 | **❌ Read Contention:** Reads can block behind writes. | **✅ True Parallel Reads:** Automatic WAL mode + optimized connection pooling for non-blocking reads. |
-| **❌ Complex Retry Logic:** You need to build resilience yourself. | **✅ Built-In Resilience:** Exponential backoff retry and robust connection management out of the box. |
-| **❌ High Memory Usage:** Large operations are inefficient. | **✅ Optimized Performance:** Streamlined operations for speed and lower memory overhead. |
+| **❌ Complex Retry Logic:** You need to build resilience yourself. | **✅ Built-In Resilience:** Exponential backoff retry with full jitter, handling all `SQLITE_BUSY*` variants correctly. |
+| **❌ EF DbContext not thread-safe:** Sharing one context across concurrent tasks throws. | **✅ IDbContextFactory support:** `AddConcurrentSqliteDbContextFactory<T>` wires up the correct EF Core pattern for concurrent workloads. |
 
 ---
 
 ## Simple Installation
+
 1. Install the package:
 
 ```bash
-# Package Manager
-Install-Package EntityFrameworkCore.Sqlite.Concurrency
-
-OR
-
 # .NET CLI
 dotnet add package EntityFrameworkCore.Sqlite.Concurrency
+
+# Package Manager
+Install-Package EntityFrameworkCore.Sqlite.Concurrency
 ```
 
-2. Update your DbContext configuration (e.g., in Program.cs):
+2. Register in `Program.cs`:
 
 ```csharp
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqliteWithConcurrency("Data Source=app.db"));
-```
-Run your app. Concurrent writes are now serialized automatically, and reads are parallel. Your existing DbContext, models, and LINQ queries work unchanged.
+// For request-scoped use (controllers, Razor Pages, Blazor Server):
+builder.Services.AddConcurrentSqliteDbContext<AppDbContext>("Data Source=app.db");
 
-Next, explore high-performance bulk inserts or fine-tune the configuration.
+// For concurrent workloads (background services, Task.WhenAll, channels):
+builder.Services.AddConcurrentSqliteDbContextFactory<AppDbContext>("Data Source=app.db");
+```
+
+Your existing `DbContext`, models, and LINQ queries work unchanged. Concurrent writes are serialized automatically. Reads execute in parallel.
 
 ---
 
@@ -74,105 +75,150 @@ Next, explore high-performance bulk inserts or fine-tune the configuration.
 
 ---
 
-## Advanced Usage & Performance
-High-Performance Bulk Operations
+## Usage Examples
+
+### Bulk Operations
+
 ```csharp
-// Process massive datasets with speed and reliability
-public async Task PerformDataMigrationAsync(List<LegacyData> legacyRecords)
+public async Task ImportPostsAsync(List<Post> posts)
 {
-    var modernRecords = legacyRecords.Select(ConvertToModernFormat).ToList();
-    
-    // Optimized bulk insert with automatic transaction management and locking
-    await _context.BulkInsertOptimizedAsync(modernRecords);
+    // Bulk insert with automatic transaction management and write serialization
+    await _context.BulkInsertOptimizedAsync(posts);
 }
 ```
 
-Optimized Concurrent Operations
+### Concurrent Workloads — use `IDbContextFactory`
+
+A `DbContext` is not thread-safe and must not be shared across concurrent operations. Inject `IDbContextFactory<T>` and call `CreateDbContext()` to give each concurrent flow its own independent instance:
+
 ```csharp
-// Multiple threads writing simultaneously just work
-public async Task ProcessHighVolumeWorkload()
+public class ReportService
 {
-    var writeTasks = new[]
+    private readonly IDbContextFactory<AppDbContext> _factory;
+
+    public ReportService(IDbContextFactory<AppDbContext> factory)
+        => _factory = factory;
+
+    public async Task ProcessAllAsync(IEnumerable<int> ids, CancellationToken ct)
     {
-        ProcessUserRegistrationAsync(newUser1),
-        ProcessUserRegistrationAsync(newUser2),
-        LogAuditEventsAsync(events)
-    };
-    
-    await Task.WhenAll(writeTasks); // All complete successfully without "database is locked"
+        var tasks = ids.Select(async id =>
+        {
+            // Each task gets its own context — no EF thread-safety violation.
+            // ThreadSafeEFCore.SQLite serializes writes at the SQLite level.
+            await using var db = _factory.CreateDbContext();
+            var item = await db.Items.FindAsync(id, ct);
+            item.ProcessedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+        });
+
+        await Task.WhenAll(tasks); // ✅ All complete without "database is locked"
+    }
 }
 ```
-Factory Pattern for Maximum Control
+
+### Retry Wrapper
+
 ```csharp
-// Create performance-optimized contexts on demand
-public async Task<TResult> ExecuteHighPerformanceOperationAsync<TResult>(
-    Func<DbContext, Task<TResult>> operation)
+public async Task UpdateWithRetryAsync(int postId, string newContent)
 {
-    using var context = ThreadSafeFactory.CreateContext<AppDbContext>(
-        "Data Source=app.db",
-        options => options.MaxRetryAttempts = 5);
-    
-    return await context.ExecuteWithRetryAsync(operation, maxRetries: 5);
+    await _context.ExecuteWithRetryAsync(async ctx =>
+    {
+        var post = await ctx.Posts.FindAsync(postId);
+        post.Content = newContent;
+        post.UpdatedAt = DateTime.UtcNow;
+        await ctx.SaveChangesAsync();
+    }, maxRetries: 5);
 }
+```
+
+### Factory Pattern (without Dependency Injection)
+
+```csharp
+using var context = ThreadSafeFactory.CreateContext<AppDbContext>(
+    "Data Source=app.db",
+    options => options.MaxRetryAttempts = 5);
+
+return await context.ExecuteWithRetryAsync(operation, maxRetries: 5);
 ```
 
 ---
 
 ## Configuration
-Maximize your SQLite performance with these optimized settings:
 
 ```csharp
-services.AddDbContext<AppDbContext>(options =>
-    options.UseSqliteWithConcurrency(
-        "Data Source=app.db",
-        concurrencyOptions =>
-        {
-            concurrencyOptions.MaxRetryAttempts = 3;          // Automatic retry for SQLITE_BUSY
-            concurrencyOptions.BusyTimeout = TimeSpan.FromSeconds(30);
-            concurrencyOptions.CommandTimeout = 300;          // 5-minute timeout for large operations
-            concurrencyOptions.WalAutoCheckpoint = 1000;      // Optimized WAL management
-        }));
+builder.Services.AddConcurrentSqliteDbContext<AppDbContext>(
+    "Data Source=app.db",
+    options =>
+    {
+        options.BusyTimeout        = TimeSpan.FromSeconds(30);
+        options.MaxRetryAttempts   = 3;
+        options.CommandTimeout     = 300;
+        options.WalAutoCheckpoint  = 1000;
+        options.SynchronousMode    = SqliteSynchronousMode.Normal;
+        options.UpgradeTransactionsToImmediate = true;
+    });
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `BusyTimeout` | 30 s | `PRAGMA busy_timeout` — SQLite retries lock acquisition internally for this duration before surfacing `SQLITE_BUSY`. |
+| `MaxRetryAttempts` | 3 | Application-level retry attempts after `SQLITE_BUSY*`, with exponential backoff and full jitter. |
+| `CommandTimeout` | 300 s | EF Core SQL command timeout. |
+| `WalAutoCheckpoint` | 1000 pages | `PRAGMA wal_autocheckpoint` — triggers a passive checkpoint after this many WAL frames (~4 MB). Set to `0` to disable. |
+| `SynchronousMode` | `Normal` | `PRAGMA synchronous` — durability vs. write-speed trade-off. `Normal` is recommended for WAL mode. |
+| `UpgradeTransactionsToImmediate` | `true` | Rewrites `BEGIN` to `BEGIN IMMEDIATE` to prevent `SQLITE_BUSY_SNAPSHOT` mid-transaction. |
+
+> **Note:** `Cache=Shared` in the connection string is incompatible with WAL mode and will throw `ArgumentException` at startup. Connection pooling (`Pooling=true`) is enabled automatically and is the correct alternative.
 
 ---
 
 ## FAQ
-Q: How does it achieve 10x faster bulk inserts?
-A: Through intelligent batching, optimized transaction management, and reduced database round-trips. We process data in optimal chunks and minimize overhead at every layer.
 
-Q: Will this work with my existing queries and LINQ code?
-A: Absolutely. Your existing query patterns, includes, and projections work unchanged while benefiting from improved read concurrency and reduced locking.
+**Q: How does it achieve 10x faster bulk inserts?**  
+A: Through intelligent batching, optimized transaction management, and reduced database round-trips. Data is processed in optimal chunks with all PRAGMAs applied once per connection.
 
-Q: Is there a performance cost for the thread safety?
-A: Less than 1ms per write operation—negligible compared to the performance gains from optimized bulk operations and parallel reads.
+**Q: Will this work with my existing queries and LINQ code?**  
+A: Yes. Existing DbContext types, models, and LINQ queries work unchanged.
 
-Q: How does memory usage compare to standard EF Core?
-A: Our optimized operations use significantly less memory, especially for bulk inserts and large queries, thanks to streaming and intelligent caching strategies.
+**Q: Is there a performance cost for the write serialization?**  
+A: Under 1ms per write operation. The semaphore overhead is negligible compared to actual I/O, and the WAL-mode PRAGMA tuning more than compensates for it on read-heavy workloads.
 
-Q: Can I still use SQLite-specific features?
-A: Yes. All SQLite features remain accessible while gaining our performance and concurrency enhancements.
+**Q: Why do I need `IDbContextFactory` for concurrent workloads?**  
+A: EF Core's `DbContext` is not thread-safe by design — it tracks state per instance. `IDbContextFactory<T>` creates an independent context per concurrent flow, which both satisfies EF Core's threading model and lets `ThreadSafeEFCore.SQLite` serialize the writes correctly at the SQLite level.
 
-## Migration: From Slow to Fast
-Upgrade path for existing applications:
+**Q: Does this work on network filesystems?**  
+A: No. SQLite WAL mode requires all connections to be on the same physical host. Do not use this library against a database on NFS, SMB, or any other network-mounted path. Use a client/server database for multi-host deployments.
 
-Add NuGet Package → Install-Package EntityFrameworkCore.Sqlite.Concurrency
+---
 
-Update DbContext Configuration → Change UseSqlite() to UseSqliteWithConcurrency()
+## Upgrade Guide
 
-Replace Bulk Operations → Change loops with SaveChanges() to BulkInsertOptimizedAsync()
+```csharp
+// 1. Replace raw AddDbContext + UseSqlite:
+//    Before:
+builder.Services.AddDbContext<AppDbContext>(o => o.UseSqlite("Data Source=app.db"));
+//    After (request-scoped):
+builder.Services.AddConcurrentSqliteDbContext<AppDbContext>("Data Source=app.db");
+//    After (concurrent workloads):
+builder.Services.AddConcurrentSqliteDbContextFactory<AppDbContext>("Data Source=app.db");
 
-Remove Custom Retry Logic → Our built-in retry handles everything optimally
+// 2. For concurrent workloads, inject IDbContextFactory<AppDbContext>
+//    and call CreateDbContext() per concurrent operation — not a shared _context.
 
-Monitor Performance Gains → Watch your operation times drop significantly
+// 3. Remove Cache=Shared from any connection string that contains it.
 
-## 🏗️ System Requirements
-.NET 10.0+
+// 4. Remove any custom retry or locking logic — the library handles it.
+```
 
-Entity Framework Core 10.0+
+---
 
-SQLite 3.35.0+
+## System Requirements
 
-## 📄 License
-EntityFrameworkCore.Sqlite.Concurrency is licensed under the MIT License. Free for commercial use, open source projects, and enterprise applications.
+- .NET 10.0+
+- Entity Framework Core 10.0+
+- Microsoft.Data.Sqlite 10.0+
+- SQLite 3.35.0+
 
-Stop compromising on SQLite performance. Get enterprise-grade speed and 100% reliability with EntityFrameworkCore.Sqlite.Concurrency—the only EF Core extension that fixes SQLite's limitations while unlocking its full potential.
+## License
+
+EntityFrameworkCore.Sqlite.Concurrency is licensed under the MIT License. Free for commercial use, open-source projects, and enterprise applications.
