@@ -52,7 +52,6 @@ builder.Services.AddDbContext<BlogDbContext>(options =>
         "Data Source=blog.db",
         sqliteOptions =>
         {
-            sqliteOptions.UseWriteQueue = true;     // Enable write serialization
             sqliteOptions.BusyTimeout = TimeSpan.FromSeconds(30);
             sqliteOptions.MaxRetryAttempts = 5;
         }));
@@ -216,8 +215,7 @@ public class TaskProcessor
 ```csharp
 // Create contexts manually when needed
 var dbContext = ThreadSafeFactory.CreateContext<BlogDbContext>(
-    "Data Source=blog.db",
-    options => options.UseWriteQueue = true);
+    "Data Source=blog.db");
 
 // Use it
 await dbContext.Posts.AddAsync(new Post { Title = "Hello World" });
@@ -254,11 +252,12 @@ public async Task UpdatePostWithRetryAsync(int postId, string newContent)
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `UseWriteQueue` | `true` | Automatically queue write operations |
-| `BusyTimeout` | 30 seconds | How long to wait if database is busy |
-| `MaxRetryAttempts` | 3 | Number of retries for busy errors |
-| `CommandTimeout` | 300 seconds | SQL command timeout |
-| `EnableWalCheckpointManagement` | `true` | Automatically manage WAL checkpoints |
+| `BusyTimeout` | 30 seconds | Per-connection `PRAGMA busy_timeout`. First layer of busy handling; SQLite retries lock acquisition internally for up to this duration. |
+| `MaxRetryAttempts` | 3 | Application-level retry attempts for `SQLITE_BUSY*` errors, with exponential backoff and jitter. |
+| `CommandTimeout` | 300 seconds | EF Core SQL command timeout in seconds. |
+| `WalAutoCheckpoint` | 1000 pages | WAL auto-checkpoint interval (`PRAGMA wal_autocheckpoint`). Each page is 4 096 bytes by default (~4 MB). Set to `0` to disable. |
+| `SynchronousMode` | `Normal` | Durability vs. performance trade-off (`PRAGMA synchronous`). `Normal` is recommended for WAL mode: safe against application crashes; a power loss or OS crash may roll back the last commit(s) not yet checkpointed. Use `Full` or `Extra` for stronger durability guarantees. |
+| `UpgradeTransactionsToImmediate` | `true` | Rewrites `BEGIN`/`BEGIN TRANSACTION` to `BEGIN IMMEDIATE` to prevent `SQLITE_BUSY_SNAPSHOT` mid-transaction. Disable only if you manage write transactions explicitly yourself. |
 
 ## Best Practices
 

@@ -14,10 +14,10 @@ public static class SqliteConnectionEnhancer
 {
     // Cache optimized connection strings to avoid repeated parsing
     private static readonly ConcurrentDictionary<string, string> _connectionStringCache = new();
-    
+
     // Shared locks per connection string to ensure serialization across multiple DbContext instances
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _writeLocks = new();
-    
+
     // Shared interceptors per connection string to avoid leaking background tasks
     private static readonly ConcurrentDictionary<string, SqliteConcurrencyInterceptor> _interceptors = new();
 
@@ -37,7 +37,6 @@ public static class SqliteConnectionEnhancer
     /// <returns>An optimized connection string.</returns>
     public static string GetOptimizedConnectionString(string originalConnectionString)
     {
-        // Cache hit - return pre-computed optimized string
         return _connectionStringCache.GetOrAdd(originalConnectionString, ComputeOptimizedConnectionString);
     }
 
@@ -57,9 +56,14 @@ public static class SqliteConnectionEnhancer
     /// <param name="connectionString">The connection string.</param>
     /// <param name="options">The concurrency options.</param>
     /// <returns>A <see cref="SqliteConcurrencyInterceptor"/> instance.</returns>
-    /// <exception cref="ArgumentException">Thrown when the provided <paramref name="options"/> do not match the options of an existing interceptor for the same <paramref name="connectionString"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// Thrown when the provided <paramref name="options"/> do not match the options of an
+    /// existing interceptor for the same <paramref name="connectionString"/>.
+    /// </exception>
     /// <remarks>
-    /// Callers must use consistent options for the same connection string, as interceptors are cached and shared.
+    /// Callers must use consistent options for the same connection string, as interceptors
+    /// are cached and shared. <see cref="SqliteConcurrencyOptions.LoggerFactory"/> is
+    /// excluded from this check.
     /// </remarks>
     public static SqliteConcurrencyInterceptor GetInterceptor(string connectionString, SqliteConcurrencyOptions options)
     {
@@ -85,7 +89,9 @@ public static class SqliteConnectionEnhancer
         return $"[MaxRetryAttempts={options.MaxRetryAttempts}, " +
                $"BusyTimeout={options.BusyTimeout}, " +
                $"CommandTimeout={options.CommandTimeout}, " +
-               $"WalAutoCheckpoint={options.WalAutoCheckpoint}]";
+               $"WalAutoCheckpoint={options.WalAutoCheckpoint}, " +
+               $"SynchronousMode={options.SynchronousMode}, " +
+               $"UpgradeTransactionsToImmediate={options.UpgradeTransactionsToImmediate}]";
     }
 
     private static string ComputeOptimizedConnectionString(string originalConnectionString)
@@ -95,8 +101,8 @@ public static class SqliteConnectionEnhancer
             Pooling = true,
             ForeignKeys = true,
             RecursiveTriggers = true,
-            Mode = SqliteOpenMode.ReadWriteCreate  
-        }; 
+            Mode = SqliteOpenMode.ReadWriteCreate
+        };
 
         return builder.ToString();
     }
@@ -117,13 +123,15 @@ public static class SqliteConnectionEnhancer
     /// <param name="options">The concurrency options.</param>
     public static void ApplyRuntimePragmas(DbConnection connection, SqliteConcurrencyOptions options)
     {
-        if (connection is not SqliteConnection sqliteConnection) 
+        if (connection is not SqliteConnection sqliteConnection)
             return;
 
         var builder = new SqliteConnectionStringBuilder(sqliteConnection.ConnectionString);
         var dataSource = builder.DataSource;
 
-        // 1. Database-scoped Pragmas - Run once per process
+        // 1. Database-scoped PRAGMAs — executed once per process per database file.
+        //    These settings are persistent (stored in the database header) and affect all
+        //    connections to the same file.
         if (!_initializedDatabases.ContainsKey(dataSource))
         {
             var lockObj = _pragmaLocks.GetOrAdd(dataSource, _ => new object());
@@ -135,14 +143,33 @@ public static class SqliteConnectionEnhancer
                     {
                         using var initCommand = sqliteConnection.CreateCommand();
                         initCommand.CommandText = $@"
+                            -- WAL mode: readers and writers can proceed concurrently (readers never block
+                            -- writers and writers never block readers). The WAL file must remain on the
+                            -- same machine as the database — do not use WAL on network filesystems.
                             PRAGMA journal_mode = WAL;
+
+                            -- 4 096 bytes aligns with modern OS page sizes (ext4, NTFS, APFS) and is the
+                            -- SQLite recommended default. Changing page_size after data exists has no effect
+                            -- without a VACUUM, so this is a no-op on pre-existing databases.
                             PRAGMA page_size = 4096;
+
+                            -- INCREMENTAL auto-vacuum reclaims free pages on demand (PRAGMA incremental_vacuum)
+                            -- without the heavy full-database rewrite that FULL auto-vacuum performs on every
+                            -- commit. NONE means free pages are never returned to the OS.
                             PRAGMA auto_vacuum = INCREMENTAL;
+
+                            -- Caps the on-disk size of the rollback journal / WAL after a checkpoint or commit.
+                            -- 128 MB is a reasonable upper bound; without this the WAL can grow unbounded when
+                            -- long-running readers prevent checkpoint completion.
                             PRAGMA journal_size_limit = 134217728;
+
+                            -- Trigger an automatic passive checkpoint after this many WAL frames are written.
+                            -- 1 000 frames × 4 096 bytes ≈ 4 MB. Smaller values keep the WAL compact (faster
+                            -- reads) at the cost of more checkpoint I/O. Set to 0 to disable auto-checkpoint.
                             PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};
                         ";
                         initCommand.ExecuteNonQuery();
-                        
+
                         _initializedDatabases.TryAdd(dataSource, true);
                     }
                     catch
@@ -155,17 +182,95 @@ public static class SqliteConnectionEnhancer
             }
         }
 
-        // 2. Connection-scoped Pragmas - Run on every open
+        // 2. Connection-scoped PRAGMAs — applied on every connection open.
+        //    These are per-connection settings that are not stored in the database file.
         using var command = sqliteConnection.CreateCommand();
         command.CommandText = $@"
+            -- How long (ms) this connection will spin waiting for a lock before returning
+            -- SQLITE_BUSY. This is the first layer of busy handling; the library adds a
+            -- second layer (application-level retry with jitter) because SQLite bypasses
+            -- this handler when it detects a potential deadlock.
             PRAGMA busy_timeout = {(int)options.BusyTimeout.TotalMilliseconds};
+
+            -- Memory-mapped I/O size (256 MB). Allows the OS virtual-memory subsystem to
+            -- serve reads directly from the mapped region, bypassing read() syscalls for
+            -- hot pages. Adjust down on memory-constrained hosts.
             PRAGMA mmap_size = 268435456;
+
+            -- Store internal temporary tables and indices in RAM instead of a temp file.
+            -- Eliminates temp-file I/O for sort and aggregation operations.
             PRAGMA temp_store = MEMORY;
+
+            -- Negative value = kibibytes. -20 000 ≈ 20 MB page cache per connection.
+            -- Each connection maintains its own cache; size accordingly for your process.
             PRAGMA cache_size = -20000;
-            PRAGMA synchronous = NORMAL;
+
+            -- Durability vs. performance trade-off. See SqliteSynchronousMode for full
+            -- documentation. NORMAL is the recommended setting for WAL mode: the database
+            -- is always consistent after an application crash; a power loss or OS crash
+            -- may roll back the last one or two commits that had not yet been checkpointed.
+            PRAGMA synchronous = {options.SynchronousMode.ToString().ToUpperInvariant()};
+
+            -- NORMAL (default): connections release file locks between transactions,
+            -- allowing other processes to access the database. EXCLUSIVE holds locks
+            -- permanently and can improve single-process throughput but prevents any
+            -- other process from opening the file.
             PRAGMA locking_mode = NORMAL;
+
+            -- OFF: deleted content is overwritten with zeros on VACUUM only, not on every
+            -- DELETE. Improves write performance. Enable if the database stores sensitive
+            -- data that must not be recoverable from free pages after deletion.
             PRAGMA secure_delete = OFF;
         ";
         command.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Runs a passive WAL checkpoint and returns its status, which indicates whether
+    /// the WAL is growing and whether long-running readers are blocking reclamation.
+    /// </summary>
+    /// <param name="connection">An open SQLite connection to the target database.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>
+    /// A <see cref="WalCheckpointStatus"/> describing the current WAL state.
+    /// Returns a zeroed status when the database is not in WAL mode.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// A <em>passive</em> checkpoint transfers already-committed WAL frames to the main
+    /// database file without blocking readers or writers. It is the safest checkpoint
+    /// mode for health monitoring.
+    /// </para>
+    /// <para>
+    /// Call this periodically (e.g., every few minutes) to detect WAL growth pressure.
+    /// A persistently <see cref="WalCheckpointStatus.IsBusy"/> result combined with a
+    /// large <see cref="WalCheckpointStatus.TotalWalFrames"/> means long-running read
+    /// transactions are preventing WAL reclamation and will eventually degrade read
+    /// performance as readers must scan an ever-larger WAL on every page lookup.
+    /// </para>
+    /// </remarks>
+    public static async Task<WalCheckpointStatus> GetWalCheckpointStatusAsync(
+        DbConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        if (connection is not SqliteConnection)
+            return new WalCheckpointStatus(false, 0, 0);
+
+        await using var command = connection.CreateCommand();
+        // PRAGMA wal_checkpoint(PASSIVE) returns a single row: (busy, log, checkpointed)
+        // busy        — 1 if blocked by an active reader, 0 otherwise
+        // log         — total WAL frames
+        // checkpointed — frames successfully written back to the main DB
+        command.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+            return new WalCheckpointStatus(false, 0, 0);
+
+        var busy         = reader.GetInt32(0) != 0;
+        var totalFrames  = reader.GetInt32(1);
+        var checkpointed = reader.GetInt32(2);
+
+        return new WalCheckpointStatus(busy, totalFrames, checkpointed);
     }
 }
