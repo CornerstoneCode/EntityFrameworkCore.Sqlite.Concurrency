@@ -31,7 +31,6 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     /// <param name="options">The options.</param>
     public ThreadSafeSqliteContext(DbContextOptions options) : base(options)
     {
-        // Try to resolve connection string and lock from options
         var extension = options.FindExtension<SqliteOptionsExtension>();
         if (extension?.ConnectionString != null)
         {
@@ -44,13 +43,13 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
             _writeLock = SqliteConnectionEnhancer.GetWriteLock(_connectionString);
         }
     }
-    
-    private SemaphoreSlim WriteLock 
+
+    private SemaphoreSlim WriteLock
     {
         get
         {
             if (_writeLock != null) return _writeLock;
-            
+
             // Fallback for cases where connection string wasn't available in constructor
             var connectionString = Database.GetDbConnection().ConnectionString;
             _writeLock = SqliteConnectionEnhancer.GetWriteLock(connectionString);
@@ -74,12 +73,32 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     /// <param name="operation">The operation to execute.</param>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>The result of the operation.</returns>
+    /// <remarks>
+    /// <para>
+    /// Two classes of <c>SQLITE_BUSY</c> are handled:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <b>SQLITE_BUSY / SQLITE_BUSY_RECOVERY / SQLITE_BUSY_TIMEOUT</b> — the
+    ///     transaction is rolled back and retried after exponential backoff with jitter.
+    ///   </item>
+    ///   <item>
+    ///     <b>SQLITE_BUSY_SNAPSHOT</b> — the read snapshot became stale. The transaction
+    ///     is rolled back and the entire operation lambda is restarted so it can re-query
+    ///     any data that may now be stale.
+    ///   </item>
+    /// </list>
+    /// <para>
+    ///   <b>SQLITE_LOCKED</b> (same-connection conflict) propagates immediately and is
+    ///   not retried, as it indicates an application-level bug.
+    /// </para>
+    /// </remarks>
     public async Task<T> ExecuteWriteAsync<T>(
         Func<TContext, Task<T>> operation,
         CancellationToken ct = default)
     {
-        // Reentrancy check: if this execution flow already holds the lock, just execute.
-        // This avoids deadlocks in nested calls on the same thread/flow.
+        // Reentrancy check: if this execution flow already holds the lock, execute
+        // directly to avoid deadlocking on the same SemaphoreSlim.
         if (SqliteConnectionEnhancer.IsWriteLockHeld.Value)
         {
             return await operation((TContext)(object)this);
@@ -95,7 +114,9 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
 
             try
             {
-                // Use explicit transaction. The interceptor will ensure BEGIN IMMEDIATE.
+                // The interceptor will upgrade this BEGIN to BEGIN IMMEDIATE, ensuring
+                // no later statement in the transaction fails with SQLITE_BUSY before
+                // commit (as long as UpgradeTransactionsToImmediate is true).
                 await using var transaction = await Database.BeginTransactionAsync(
                     System.Data.IsolationLevel.Serializable, ct);
 
@@ -105,17 +126,34 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
 
                 return result;
             }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5) // SQLITE_BUSY
+            catch (SqliteException ex) when (SqliteErrorCodes.IsAnyBusy(ex))
             {
-                // Release lock before retry wait
+                // Release the lock before sleeping so other writers can make progress.
                 SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
                 WriteLock.Release();
 
                 attempt++;
                 if (attempt >= maxRetryAttempts)
-                    throw new TimeoutException($"Database busy timeout after {attempt} retries", ex);
+                {
+                    var kind = SqliteErrorCodes.IsBusySnapshot(ex)
+                        ? "SQLITE_BUSY_SNAPSHOT (stale read snapshot — another writer committed after this transaction began)"
+                        : $"SQLITE_BUSY (extended code {ex.SqliteExtendedErrorCode})";
 
-                await Task.Delay(100 * (int)Math.Pow(2, attempt), ct);
+                    throw new TimeoutException(
+                        $"SQLite database busy after {attempt} retry attempt(s). " +
+                        $"Error: {kind}. " +
+                        $"Consider increasing MaxRetryAttempts or BusyTimeout.",
+                        ex);
+                }
+
+                // Exponential backoff with full jitter: sleep in [baseDelay, 2×baseDelay].
+                // Jitter prevents synchronized retry storms when multiple threads contend.
+                var baseDelay = 100 * Math.Pow(2, attempt);
+                var jitter    = Random.Shared.NextDouble() * baseDelay;
+                await Task.Delay(TimeSpan.FromMilliseconds(baseDelay + jitter), ct);
+
+                // Continue to next loop iteration — for BUSY_SNAPSHOT this correctly
+                // restarts the entire operation lambda so stale data is re-queried.
             }
             finally
             {
@@ -145,12 +183,17 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     }
 
     /// <summary>
-    /// Executes a read operation. No locking is performed.
+    /// Executes a read operation without locking.
     /// </summary>
     /// <typeparam name="T">The result type.</typeparam>
     /// <param name="operation">The operation to execute.</param>
     /// <param name="ct">The cancellation token.</param>
     /// <returns>The result of the operation.</returns>
+    /// <remarks>
+    /// WAL mode allows reads to proceed concurrently with writes. Keep read transactions
+    /// short to avoid blocking WAL checkpoint completion, which can cause the WAL file to
+    /// grow and degrade read performance over time.
+    /// </remarks>
     public async Task<T> ExecuteReadAsync<T>(
         Func<TContext, Task<T>> operation,
         CancellationToken ct = default)
@@ -170,7 +213,6 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     {
         await ExecuteWriteAsync(async ctx =>
         {
-            // Batch inserts
             var batchSize = 1000;
             for (int i = 0; i < entities.Count; i += batchSize)
             {
@@ -188,12 +230,7 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     {
         get
         {
-            if (_options == null)
-            {
-                // Try to get options from context
-                _options = new SqliteConcurrencyOptions();
-            }
-
+            _options ??= new SqliteConcurrencyOptions();
             return _options;
         }
     }

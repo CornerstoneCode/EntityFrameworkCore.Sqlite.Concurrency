@@ -18,6 +18,9 @@ public static class SqliteConcurrencyExtensions
     /// <param name="connectionString">The SQLite connection string.</param>
     /// <param name="configure">An optional action to configure concurrency options.</param>
     /// <returns>The options builder.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when any option value is outside its valid range.
+    /// </exception>
     public static DbContextOptionsBuilder UseSqliteWithConcurrency(
         this DbContextOptionsBuilder optionsBuilder,
         string connectionString,
@@ -25,36 +28,60 @@ public static class SqliteConcurrencyExtensions
     {
         var options = new SqliteConcurrencyOptions();
         configure?.Invoke(options);
+        options.Validate();
 
         // Get the enhanced connection string
         var enhancedConnectionString = SqliteConnectionEnhancer
             .GetOptimizedConnectionString(connectionString);
-        
+
         // Use the connection string with EF Core to allow proper pooling
         optionsBuilder.UseSqlite(enhancedConnectionString, sqliteOptions =>
         {
-            // Configure command timeout
             sqliteOptions.CommandTimeout(options.CommandTimeout);
         });
-        
+
         // Add interceptors for PRAGMAs, performance, and concurrency
         var interceptor = SqliteConnectionEnhancer.GetInterceptor(enhancedConnectionString, options);
         optionsBuilder.AddInterceptors(interceptor);
-        
+
         return optionsBuilder;
     }
- 
-    
+
 
     /// <summary>
-    /// Executes an operation with automatic retry on SQLITE_BUSY errors.
+    /// Executes an operation with automatic retry on <c>SQLITE_BUSY</c> and
+    /// <c>SQLITE_BUSY_SNAPSHOT</c> errors.
     /// </summary>
     /// <typeparam name="T">The result type.</typeparam>
     /// <param name="context">The database context.</param>
     /// <param name="operation">The operation to execute.</param>
-    /// <param name="maxRetries">The maximum number of retries.</param>
+    /// <param name="maxRetries">
+    /// The maximum number of retry attempts. Each retry waits using exponential backoff
+    /// with jitter starting at 100 ms.
+    /// </param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The result of the operation.</returns>
+    /// <remarks>
+    /// <para>
+    /// Two classes of busy error are handled:
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <b>SQLITE_BUSY / SQLITE_BUSY_RECOVERY / SQLITE_BUSY_TIMEOUT</b> — another
+    ///     connection holds a lock. The operation is retried after a backoff delay.
+    ///   </item>
+    ///   <item>
+    ///     <b>SQLITE_BUSY_SNAPSHOT</b> — the connection's read snapshot became stale
+    ///     after another writer committed. The entire operation is restarted so that it
+    ///     can acquire a fresh snapshot. Any data read in the failed attempt must be
+    ///     re-queried inside the operation lambda.
+    ///   </item>
+    /// </list>
+    /// <para>
+    ///   <b>SQLITE_LOCKED</b> (same-connection conflict) is not retried and propagates
+    ///   immediately, as it indicates an application-level bug.
+    /// </para>
+    /// </remarks>
     public static async Task<T> ExecuteWithRetryAsync<T>(
         this DbContext context,
         Func<DbContext, Task<T>> operation,
@@ -68,10 +95,25 @@ public static class SqliteConcurrencyExtensions
             {
                 return await operation(context);
             }
-            catch (SqliteException ex) when (ex.SqliteErrorCode == 5 && attempt < maxRetries)
+            catch (SqliteException ex) when (SqliteErrorCodes.IsAnyBusy(ex) && attempt < maxRetries)
             {
+                // SQLITE_LOCKED (code 6) is not caught here — it is an app-level bug and
+                // should not be silently retried.
+
                 attempt++;
-                await Task.Delay(TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt)), cancellationToken);
+                var isSnapshot = SqliteErrorCodes.IsBusySnapshot(ex);
+
+                // Exponential backoff with full jitter: delay is uniformly distributed in
+                // [baseDelay, 2×baseDelay] to prevent synchronized retry storms ("thundering
+                // herd") when multiple threads hit contention simultaneously.
+                var baseDelay = 100 * Math.Pow(2, attempt);
+                var jitter    = Random.Shared.NextDouble() * baseDelay;
+                await Task.Delay(TimeSpan.FromMilliseconds(baseDelay + jitter), cancellationToken);
+
+                // For SQLITE_BUSY_SNAPSHOT the operation lambda will restart on the next
+                // loop iteration, which is correct: it allows the caller to re-query any
+                // data that may now be stale.
+                _ = isSnapshot; // consumed for documentation clarity
             }
         }
     }
@@ -107,7 +149,6 @@ public static class SqliteConcurrencyExtensions
         {
             await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 
-            // Batch inserts
             var batchSize = 1000;
             var batches = entities.Chunk(batchSize);
 

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using EntityFrameworkCore.Sqlite.Concurrency.Models;
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
@@ -13,6 +14,7 @@ public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionI
     private readonly SqliteConcurrencyOptions _options;
     private readonly SemaphoreSlim _writeLock;
     private readonly string _connectionString;
+    private readonly ILogger<SqliteConcurrencyInterceptor>? _logger;
 
     /// <summary>
     /// Gets the concurrency options configured for this interceptor.
@@ -29,6 +31,7 @@ public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionI
         _options = options;
         _connectionString = connectionString;
         _writeLock = SqliteConnectionEnhancer.GetWriteLock(connectionString);
+        _logger = options.LoggerFactory?.CreateLogger<SqliteConcurrencyInterceptor>();
     }
 
     // --- Connection Management ---
@@ -96,20 +99,81 @@ public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionI
         return base.ScalarExecutingAsync(command, eventData, result, cancellationToken);
     }
 
-    private static void UpgradeToBeginImmediate(DbCommand command)
+    // --- Command Failure Logging ---
+
+    /// <inheritdoc />
+    public override void CommandFailed(DbCommand command, CommandErrorEventData eventData)
     {
-        var text = command.CommandText.Trim();
-        if (text.StartsWith("BEGIN", StringComparison.OrdinalIgnoreCase) && 
-            !text.Contains("IMMEDIATE", StringComparison.OrdinalIgnoreCase) && 
-            !text.Contains("EXCLUSIVE", StringComparison.OrdinalIgnoreCase))
+        LogCommandFailure(eventData.Exception, command.CommandText);
+        base.CommandFailed(command, eventData);
+    }
+
+    /// <inheritdoc />
+    public override Task CommandFailedAsync(DbCommand command, CommandErrorEventData eventData, CancellationToken cancellationToken = default)
+    {
+        LogCommandFailure(eventData.Exception, command.CommandText);
+        return base.CommandFailedAsync(command, eventData, cancellationToken);
+    }
+
+    private void LogCommandFailure(Exception? exception, string commandText)
+    {
+        if (_logger is null || exception is not SqliteException sqlEx) return;
+
+        if (SqliteErrorCodes.IsBusySnapshot(sqlEx))
         {
-            if (text.Equals("BEGIN", StringComparison.OrdinalIgnoreCase) || 
-                text.Equals("BEGIN TRANSACTION", StringComparison.OrdinalIgnoreCase))
-            {
-                command.CommandText = "BEGIN IMMEDIATE";
-            }
+            _logger.LogWarning(
+                sqlEx,
+                "SQLITE_BUSY_SNAPSHOT on command [{Command}]: the connection's read snapshot is stale — " +
+                "another writer committed after this transaction began. The transaction will be rolled back " +
+                "and retried from scratch. Extended error code: {ExtendedCode}.",
+                TruncateCommand(commandText),
+                sqlEx.SqliteExtendedErrorCode);
+        }
+        else if (SqliteErrorCodes.IsRetryableBusy(sqlEx))
+        {
+            _logger.LogWarning(
+                sqlEx,
+                "SQLITE_BUSY on command [{Command}]: the database is locked by another connection. " +
+                "Will retry with backoff. Extended error code: {ExtendedCode}.",
+                TruncateCommand(commandText),
+                sqlEx.SqliteExtendedErrorCode);
+        }
+        else if (SqliteErrorCodes.IsLocked(sqlEx))
+        {
+            _logger.LogError(
+                sqlEx,
+                "SQLITE_LOCKED on command [{Command}]: conflict within the same connection. " +
+                "This typically indicates a statement is still open on the same connection while " +
+                "a write is attempted. Extended error code: {ExtendedCode}.",
+                TruncateCommand(commandText),
+                sqlEx.SqliteExtendedErrorCode);
         }
     }
+
+    private void UpgradeToBeginImmediate(DbCommand command)
+    {
+        if (!_options.UpgradeTransactionsToImmediate) return;
+
+        var text = command.CommandText.Trim();
+        if (!text.StartsWith("BEGIN", StringComparison.OrdinalIgnoreCase)) return;
+        if (text.Contains("IMMEDIATE", StringComparison.OrdinalIgnoreCase)) return;
+        if (text.Contains("EXCLUSIVE", StringComparison.OrdinalIgnoreCase)) return;
+
+        if (text.Equals("BEGIN", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("BEGIN TRANSACTION", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("BEGIN DEFERRED", StringComparison.OrdinalIgnoreCase) ||
+            text.Equals("BEGIN DEFERRED TRANSACTION", StringComparison.OrdinalIgnoreCase))
+        {
+            command.CommandText = "BEGIN IMMEDIATE";
+            _logger?.LogDebug(
+                "Upgraded [{Original}] to BEGIN IMMEDIATE to prevent SQLITE_BUSY_SNAPSHOT " +
+                "mid-transaction. Set UpgradeTransactionsToImmediate = false to disable.",
+                text);
+        }
+    }
+
+    private static string TruncateCommand(string commandText)
+        => commandText.Length <= 120 ? commandText : commandText[..120] + "…";
 
     // --- Transaction Interception ---
 
