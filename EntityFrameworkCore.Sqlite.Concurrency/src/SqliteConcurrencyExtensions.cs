@@ -2,6 +2,7 @@ using System.Data;
 using EntityFrameworkCore.Sqlite.Concurrency.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
@@ -117,6 +118,80 @@ public static class SqliteConcurrencyExtensions
             }
         }
     }
+
+    /// <summary>
+    /// Saves all changes in the context while holding the shared per-database write lock,
+    /// serializing concurrent writers at the application level before they contend in SQLite.
+    /// </summary>
+    /// <param name="context">The database context.</param>
+    /// <param name="maxRetries">
+    /// Maximum number of retry attempts if <c>SQLITE_BUSY</c> is returned even after the
+    /// write lock is held. Uses exponential backoff starting at 50 ms, capped at 2 000 ms.
+    /// </param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of state entries written to the database.</returns>
+    /// <remarks>
+    /// <para>
+    /// Use this method instead of <see cref="DbContext.SaveChangesAsync(CancellationToken)"/>
+    /// in background workers or other scenarios where multiple concurrent callers write to
+    /// the same SQLite database. The shared lock ensures that at most one writer is active
+    /// per database file at any point, avoiding SQLite-level busy-wait storms when many
+    /// writers contend simultaneously.
+    /// </para>
+    /// <para>
+    /// If the calling code is already inside a <see cref="BulkInsertOptimizedAsync{T}"/>
+    /// (or any other scope that already holds the write lock), the method skips lock
+    /// acquisition to prevent deadlocks.
+    /// </para>
+    /// </remarks>
+    public static async Task<int> SaveChangesSerializedAsync(
+        this DbContext context,
+        int maxRetries = 3,
+        CancellationToken cancellationToken = default)
+    {
+        if (SqliteConnectionEnhancer.IsWriteLockHeld.Value)
+            return await context.SaveChangesAsync(cancellationToken);
+
+        var connectionString = context.Database.GetDbConnection().ConnectionString;
+        var enhancedConnectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
+        var writeLock = SqliteConnectionEnhancer.GetWriteLock(enhancedConnectionString);
+
+        await writeLock.WaitAsync(cancellationToken);
+        SqliteConnectionEnhancer.IsWriteLockHeld.Value = true;
+
+        try
+        {
+            var delayMs = 50;
+            for (var attempt = 1; ; attempt++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    return await context.SaveChangesAsync(cancellationToken);
+                }
+                catch (Exception ex) when (attempt < maxRetries && IsRetryableSqliteBusy(ex))
+                {
+                    await Task.Delay(delayMs, cancellationToken);
+                    delayMs = Math.Min(delayMs * 2, 2000);
+                }
+            }
+        }
+        finally
+        {
+            SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
+            writeLock.Release();
+        }
+    }
+
+    // EF Core wraps SqliteException in DbUpdateException when SaveChangesAsync fails,
+    // so we need to unwrap one level to classify the error.
+    private static bool IsRetryableSqliteBusy(Exception ex) =>
+        ex switch
+        {
+            SqliteException se                                          => SqliteErrorCodes.IsRetryableBusy(se),
+            DbUpdateException { InnerException: SqliteException inner } => SqliteErrorCodes.IsRetryableBusy(inner),
+            _                                                           => false
+        };
 
     /// <summary>
     /// Performs a bulk insert with optimized settings and optional app-level locking.

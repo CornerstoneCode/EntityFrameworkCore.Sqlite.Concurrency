@@ -31,6 +31,11 @@ public static class SqliteConnectionEnhancer
 
     private static readonly ConcurrentDictionary<string, bool> _initializedDatabases = new();
 
+    // Tracks databases that have had pre-open file preparation (ReadOnly clearing, stale shm
+    // deletion) applied. Keyed by the resolved absolute path so that relative and absolute
+    // forms of the same path map to the same entry.
+    private static readonly ConcurrentDictionary<string, bool> _preparedDatabases = new();
+
     /// <summary>
     /// Gets an optimized version of the provided connection string.
     /// </summary>
@@ -123,6 +128,94 @@ public static class SqliteConnectionEnhancer
     }
 
     /// <summary>
+    /// Prepares the database file for opening: clears the read-only file attribute and removes
+    /// any stale <c>.db-shm</c> file. Must be called <em>before</em> the connection is opened
+    /// so that SQLite sees a writable file and does not fall back to a read-only pager.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// On Windows, MSBuild sometimes stamps the database file with <see cref="FileAttributes.ReadOnly"/>
+    /// when it is included in the project as <c>Content</c> with <c>CopyToOutputDirectory</c>.
+    /// SQLite's <c>sqlite3_open_v2</c> attempts <c>O_RDWR</c>; if the OS returns
+    /// <c>EACCES</c>, it silently falls back to <c>O_RDONLY</c>, which permanently marks the
+    /// pager as read-only. Any subsequent write attempt — including
+    /// <c>PRAGMA journal_mode = WAL</c> — then returns <c>SQLITE_READONLY</c>. Clearing the
+    /// attribute before the call to <c>Open()</c> prevents this fallback.
+    /// </para>
+    /// <para>
+    /// The <c>.db-shm</c> file is SQLite's shared-memory hash table that indexes WAL frames.
+    /// It contains no committed data and is always recreated on the next WAL open. A stale
+    /// copy left by a previous crashed process can cause <c>SQLITE_READONLY_CANTINIT</c>
+    /// because SQLite detects a header mismatch.
+    /// </para>
+    /// <para>
+    /// This method runs at most once per database file per process (subsequent calls are
+    /// no-ops). It is safe to call from multiple threads; an internal lock serializes the
+    /// first call.
+    /// </para>
+    /// </remarks>
+    /// <param name="connection">The connection that is about to be opened.</param>
+    public static void PrepareForConnectionOpen(DbConnection connection)
+    {
+        if (connection is not SqliteConnection sqliteConnection)
+            return;
+
+        var builder   = new SqliteConnectionStringBuilder(sqliteConnection.ConnectionString);
+        var dataSource = builder.DataSource;
+
+        if (string.IsNullOrEmpty(dataSource))
+            return;
+
+        // Resolve to an absolute path using the same working directory that SQLite will use,
+        // so that relative forms (e.g. "Data Source=app.db") and absolute forms map to the
+        // same key. Path.GetFullPath is a no-op when the path is already absolute.
+        var dbFullPath = Path.GetFullPath(dataSource);
+
+        if (_preparedDatabases.ContainsKey(dbFullPath))
+            return;
+
+        var lockObj = _pragmaLocks.GetOrAdd(dbFullPath, _ => new object());
+        lock (lockObj)
+        {
+            if (_preparedDatabases.ContainsKey(dbFullPath))
+                return;
+
+            // Clear the read-only attribute from the database file so SQLite can open
+            // it in read-write mode. This must happen before Open() is called.
+            TryClearReadOnly(dbFullPath);
+
+            // Clear the read-only attribute from the WAL file so that WAL recovery can
+            // complete. If the WAL file is read-only, SQLite falls back to a read-only
+            // pager during recovery, which then blocks PRAGMA journal_mode = WAL.
+            TryClearReadOnly(dbFullPath + "-wal");
+
+            // Delete the stale shm file. If another process currently has the database
+            // open the file will be locked on Windows and File.Delete will throw — we
+            // leave it untouched in that case and let SQLite sort it out.
+            var shmPath = dbFullPath + "-shm";
+            if (File.Exists(shmPath))
+            {
+                try { File.Delete(shmPath); }
+                catch { /* locked by live process — leave it alone */ }
+            }
+
+            _preparedDatabases.TryAdd(dbFullPath, true);
+        }
+    }
+
+    private static void TryClearReadOnly(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return;
+            var attrs = File.GetAttributes(path);
+            if ((attrs & FileAttributes.ReadOnly) != 0)
+                File.SetAttributes(path, attrs & ~FileAttributes.ReadOnly);
+        }
+        catch { /* best-effort */ }
+    }
+
+    /// <summary>
     /// Applies runtime PRAGMAs to the specified connection using default options.
     /// </summary>
     /// <param name="connection">The database connection.</param>
@@ -144,24 +237,28 @@ public static class SqliteConnectionEnhancer
         var builder = new SqliteConnectionStringBuilder(sqliteConnection.ConnectionString);
         var dataSource = builder.DataSource;
 
+        // Resolve to an absolute path so that relative forms ("Data Source=app.db") and
+        // absolute forms of the same file map to the same _initializedDatabases key.
+        var dbKey = string.IsNullOrEmpty(dataSource) ? dataSource : Path.GetFullPath(dataSource);
+
         // 1. Database-scoped PRAGMAs — executed once per process per database file.
         //    These settings are persistent (stored in the database header) and affect all
         //    connections to the same file.
-        if (!_initializedDatabases.ContainsKey(dataSource))
+        if (!_initializedDatabases.ContainsKey(dbKey))
         {
-            var lockObj = _pragmaLocks.GetOrAdd(dataSource, _ => new object());
+            var lockObj = _pragmaLocks.GetOrAdd(dbKey, _ => new object());
             lock (lockObj)
             {
-                if (!_initializedDatabases.ContainsKey(dataSource))
+                if (!_initializedDatabases.ContainsKey(dbKey))
                 {
                     var logger = options.LoggerFactory?.CreateLogger(nameof(SqliteConnectionEnhancer));
 
                     // WAL mode is initialized first and in isolation so that a SQLITE_READONLY
-                    // failure (most commonly SQLITE_READONLY_CANTINIT on Windows when the .db-shm
-                    // file cannot be created or has wrong permissions) is caught and logged as a
-                    // warning rather than crashing the entire interceptor. Without WAL the database
-                    // still functions; concurrent write performance is reduced because reads and
-                    // writes cannot proceed simultaneously.
+                    // failure is logged as a warning rather than crashing the entire interceptor.
+                    // PrepareForConnectionOpen (called from ConnectionOpening before sqlite3_open_v2)
+                    // handles the common root causes proactively. If WAL still fails here, the
+                    // database falls back to the default journal mode — concurrent read/write
+                    // performance is reduced but the database remains functional.
                     try
                     {
                         using var walCommand = sqliteConnection.CreateCommand();
@@ -216,7 +313,7 @@ public static class SqliteConnectionEnhancer
 
                     // Mark as initialized regardless of partial failures above so that the
                     // failed PRAGMAs are not retried on every subsequent connection open.
-                    _initializedDatabases.TryAdd(dataSource, true);
+                    _initializedDatabases.TryAdd(dbKey, true);
                 }
             }
         }

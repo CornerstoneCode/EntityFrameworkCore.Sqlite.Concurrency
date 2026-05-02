@@ -234,9 +234,16 @@ public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionI
 
     // --- Connection Management (IConnectionInterceptor) ---
     /// <inheritdoc />
-    public void ConnectionOpening(DbConnection connection, ConnectionEventData eventData) { }
+    public void ConnectionOpening(DbConnection connection, ConnectionEventData eventData)
+    {
+        SqliteConnectionEnhancer.PrepareForConnectionOpen(connection);
+    }
     /// <inheritdoc />
-    public Task ConnectionOpeningAsync(DbConnection connection, ConnectionEventData eventData, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ConnectionOpeningAsync(DbConnection connection, ConnectionEventData eventData, CancellationToken cancellationToken = default)
+    {
+        SqliteConnectionEnhancer.PrepareForConnectionOpen(connection);
+        return Task.CompletedTask;
+    }
     /// <inheritdoc />
     public void ConnectionClosed(DbConnection connection, ConnectionEndEventData eventData) { }
     /// <inheritdoc />
