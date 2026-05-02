@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Text;
 using EntityFrameworkCore.Sqlite.Concurrency.Models;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 
 
 namespace EntityFrameworkCore.Sqlite.Concurrency;
@@ -153,15 +154,36 @@ public static class SqliteConnectionEnhancer
             {
                 if (!_initializedDatabases.ContainsKey(dataSource))
                 {
+                    var logger = options.LoggerFactory?.CreateLogger(nameof(SqliteConnectionEnhancer));
+
+                    // WAL mode is initialized first and in isolation so that a SQLITE_READONLY
+                    // failure (most commonly SQLITE_READONLY_CANTINIT on Windows when the .db-shm
+                    // file cannot be created or has wrong permissions) is caught and logged as a
+                    // warning rather than crashing the entire interceptor. Without WAL the database
+                    // still functions; concurrent write performance is reduced because reads and
+                    // writes cannot proceed simultaneously.
+                    try
+                    {
+                        using var walCommand = sqliteConnection.CreateCommand();
+                        walCommand.CommandText = "PRAGMA journal_mode = WAL;";
+                        walCommand.ExecuteNonQuery();
+                    }
+                    catch (SqliteException ex) when (ex.SqliteErrorCode == 8) // SQLITE_READONLY
+                    {
+                        logger?.LogWarning(ex,
+                            "Could not enable WAL mode for '{DataSource}' " +
+                            "(SQLITE_READONLY, extended code: {Extended}). " +
+                            "The database will use the default journal mode — concurrent read/write " +
+                            "performance will be reduced. To resolve: ensure the database directory " +
+                            "is writable and delete any stale .db-shm / .db-wal files alongside the " +
+                            "database, then restart the application.",
+                            dataSource, ex.SqliteExtendedErrorCode);
+                    }
+
                     try
                     {
                         using var initCommand = sqliteConnection.CreateCommand();
                         initCommand.CommandText = $@"
-                            -- WAL mode: readers and writers can proceed concurrently (readers never block
-                            -- writers and writers never block readers). The WAL file must remain on the
-                            -- same machine as the database — do not use WAL on network filesystems.
-                            PRAGMA journal_mode = WAL;
-
                             -- 4 096 bytes aligns with modern OS page sizes (ext4, NTFS, APFS) and is the
                             -- SQLite recommended default. Changing page_size after data exists has no effect
                             -- without a VACUUM, so this is a no-op on pre-existing databases.
@@ -183,15 +205,18 @@ public static class SqliteConnectionEnhancer
                             PRAGMA wal_autocheckpoint = {options.WalAutoCheckpoint};
                         ";
                         initCommand.ExecuteNonQuery();
-
-                        _initializedDatabases.TryAdd(dataSource, true);
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        // Ensure we don't leave it marked as initialized if it failed
-                        _initializedDatabases.TryRemove(dataSource, out _);
-                        throw;
+                        logger?.LogWarning(ex,
+                            "One or more database-initialization PRAGMAs failed for '{DataSource}'. " +
+                            "The connection-scoped PRAGMAs (busy_timeout, cache_size, etc.) will still be applied.",
+                            dataSource);
                     }
+
+                    // Mark as initialized regardless of partial failures above so that the
+                    // failed PRAGMAs are not retried on every subsequent connection open.
+                    _initializedDatabases.TryAdd(dataSource, true);
                 }
             }
         }

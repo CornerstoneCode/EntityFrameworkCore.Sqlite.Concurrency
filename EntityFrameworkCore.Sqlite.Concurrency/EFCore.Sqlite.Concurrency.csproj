@@ -11,7 +11,7 @@
 
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
-        <Version>10.0.3</Version>
+        <Version>10.0.4</Version>
 
         <!-- Core Metadata for Trust & Recognition -->
         <Authors>Mike Gotfryd</Authors>
