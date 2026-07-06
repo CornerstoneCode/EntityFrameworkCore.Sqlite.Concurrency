@@ -23,10 +23,26 @@ jobs:
         cache-dependency-path: EntityFrameworkCore.Sqlite.Concurrency/packages.lock.json
 
     - name: Restore dependencies
-      run: dotnet restore EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj
+      run: |
+        dotnet restore EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj
+        dotnet restore EFCore.Sqlite.Concurrency.Test/EFCore.Sqlite.Concurrency.Test.csproj
 
-    - name: Build
+    - name: Build library
       run: dotnet build EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-restore
 
+    - name: Build test project
+      run: dotnet build EFCore.Sqlite.Concurrency.Test/EFCore.Sqlite.Concurrency.Test.csproj -c Release --no-restore
+
+    - name: Test
+      run: dotnet test EFCore.Sqlite.Concurrency.Test/EFCore.Sqlite.Concurrency.Test.csproj --framework net10.0 -c Release --no-build --logger "trx;LogFileName=results.xml"
+
+    - name: Publish Test Results
+      uses: dorny/test-reporter@v1
+      if: always()
+      with:
+        name: xUnit Tests
+        path: "**/*.trx"
+        reporter: dotnet-trx
+
     - name: Pack
-      run: dotnet pack EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-build -o out 
+      run: dotnet pack EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-build -o out
