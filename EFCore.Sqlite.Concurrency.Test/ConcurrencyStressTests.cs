@@ -15,8 +15,8 @@ public class ConcurrencyStressTests
     [Fact]
     public async Task SaveChangesSerializedAsync_WritesAllRows()
     {
-        const int writers = 50;
-        const int rowsPerWriter = 10;
+        const int writers = 500;
+        const int rowsPerWriter = 100;
         const int expected = writers * rowsPerWriter;
 
         using var db = new TempDatabase();
@@ -53,8 +53,8 @@ public class ConcurrencyStressTests
     [Fact]
     public async Task BulkInsertOptimizedAsync_WritesAllRows()
     {
-        const int writers        = 10;
-        const int entitiesPerWriter = 50;
+        const int writers        = 100;
+        const int entitiesPerWriter = 500;
         const int expected       = writers * entitiesPerWriter;
 
         using var db = new TempDatabase();
@@ -90,8 +90,8 @@ public class ConcurrencyStressTests
     [Fact]
     public async Task ExecuteWriteAsync_ThreadSafeSqliteContext_WritesAllRows()
     {
-        const int writers      = 50;
-        const int rowsPerWriter = 10;
+        const int writers      = 500;
+        const int rowsPerWriter = 100;
         const int expected     = writers * rowsPerWriter;
 
         using var db = new TempDatabase();
@@ -133,9 +133,9 @@ public class ConcurrencyStressTests
     [Fact]
     public async Task MixedReadsAndWrites_NoExceptionsOrDataLoss()
     {
-        const int writers      = 50;
-        const int readers      = 20;
-        const int rowsPerWriter = 10;
+        const int writers      = 500;
+        const int readers      = 200;
+        const int rowsPerWriter = 100;
         const int expected     = writers * rowsPerWriter;
 
         using var db = new TempDatabase();
