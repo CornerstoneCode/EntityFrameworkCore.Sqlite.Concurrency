@@ -1,0 +1,16 @@
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\bin\Release\net10.0\packages.lock.json
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\bin\Release\net10.0\EFCore.Sqlite.Concurrency.deps.json
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\bin\Release\net10.0\EFCore.Sqlite.Concurrency.dll
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\bin\Release\net10.0\EFCore.Sqlite.Concurrency.pdb
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\bin\Release\net10.0\EFCore.Sqlite.Concurrency.xml
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.csproj.AssemblyReference.cache
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.GeneratedMSBuildEditorConfig.editorconfig
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.AssemblyInfoInputs.cache
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.AssemblyInfo.cs
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.csproj.CoreCompileInputs.cache
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.sourcelink.json
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.dll
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\refint\EFCore.Sqlite.Concurrency.dll
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.xml
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\EFCore.Sqlite.Concurrency.pdb
+D:\PersonalGitRepos\EFCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.Benchmarks\bin\Release\net10.0\f4441981-fd01-4b58-9481-be3ac2e72e00\obj\Release\net10.0\ref\EFCore.Sqlite.Concurrency.dll
