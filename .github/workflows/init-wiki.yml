@@ -1,0 +1,29 @@
+name: Initialize Wiki
+
+on:
+  workflow_dispatch:
+
+jobs:
+  init-wiki:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Push Home page to wiki
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          mkdir wiki-init && cd wiki-init
+          git init
+          cp ../wiki/Home.md ./Home.md
+          git add Home.md
+          git commit -m "Add Home wiki page: fixing SQLite Error 5 database is locked in EF Core"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
+          git push -u origin master
