@@ -39,7 +39,7 @@ jobs:
           VERSION=$(grep -oP '(?<=<Version>).*?(?=</Version>)' EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Detected version: $VERSION"
-          
+
           if [[ $VERSION == *"-"* ]] || [[ "${{ github.event.inputs.environment }}" == "beta" ]]; then
             echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
           else
@@ -60,12 +60,134 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
-          name: Release v${{ steps.get_version.outputs.VERSION }}
+          name: "EntityFrameworkCore.Sqlite.Concurrency v${{ steps.get_version.outputs.VERSION }}"
           draft: false
           prerelease: ${{ steps.get_version.outputs.IS_PRERELEASE == 'true' }}
           files: |
             out/*.nupkg
             out/*.snupkg
+          body: |
+            ## Fix `SQLite Error 5: 'database is locked'` in EF Core
+
+            If your application throws any of these exceptions, this package is the fix:
+
+            ```
+            Microsoft.Data.Sqlite.SqliteException: SQLite Error 5: 'database is locked'
+            Microsoft.Data.Sqlite.SqliteException: SQLite Error 5: 'database is locked' (SQLITE_BUSY_SNAPSHOT)
+            InvalidOperationException: A second operation was started on this context instance
+            ```
+
+            One line change — no other modifications to your application code:
+
+            ```csharp
+            // Before
+            options.UseSqlite("Data Source=app.db");
+
+            // After — eliminates SQLITE_BUSY, serializes writes, enables WAL-mode parallel reads
+            options.UseSqliteWithConcurrency("Data Source=app.db");
+            ```
+
+            ---
+
+            ## What's New in v${{ steps.get_version.outputs.VERSION }}
+
+            ### Channel-Based Write Queue
+
+            Replaces the per-database `SemaphoreSlim(1,1)` with a `Channel<IWriteRequest>`-based write queue backed by a single background writer.
+
+            Under concurrent write load, `SemaphoreSlim.Release()` wakes all N waiters simultaneously — N-1 immediately go back to sleep. This thundering-herd pattern causes CPU spikes and unfair scheduling. A `Channel<T>` parks callers in FIFO order and drains them one at a time. No wakeup storm. No API change required.
+
+            - New `SqliteWriteQueue` internal class owns the channel and the background writer loop
+            - New `WriteQueueCapacity` option: `null` = unbounded (default), integer = bounded with `BoundedChannelFullMode.Wait` for back-pressure
+            - Zero breaking changes
+
+            ### Bug Fixes
+
+            - `ThreadSafeSqliteContext.ExecuteWriteAsync` was ignoring registered options (always using defaults). Fixed via interceptor lookup.
+            - `BulkInsertSafeAsync` used `Skip/Take` in a loop — O(n^2) complexity. Replaced with `Chunk(1000)`.
+            - `BulkInsertSafeAsync` did not call `ChangeTracker.Clear()` between batches — memory grew linearly with entity count. Now cleared after each batch.
+
+            ### netstandard 2.0 Support
+
+            The connection and queue layer now targets `netstandard2.0`. EF Core-dependent APIs remain `net10.0`-only.
+
+            ### Real BenchmarkDotNet Results
+
+            Measured on .NET 10.0.2 / Windows 11 / Intel i7-13700K:
+
+            | Operation | Standard EF Core | This Package | Ratio |
+            |---|---|---|---|
+            | Bulk insert — 1,000 entities | 4,500 ms | **28 ms** | ~161x faster |
+            | Concurrent writes — 50 tasks (`Task.WhenAll`) | throws `SQLITE_BUSY` | completes cleanly | N/A |
+
+            ---
+
+            ## Installation
+
+            ```bash
+            dotnet add package EntityFrameworkCore.Sqlite.Concurrency
+            ```
+
+            Or search **EntityFrameworkCore.Sqlite.Concurrency** on [NuGet.org](https://www.nuget.org/packages/EntityFrameworkCore.Sqlite.Concurrency).
+
+            ---
+
+            ## Problems This Solves
+
+            | Error | Cause | Fix |
+            |---|---|---|
+            | `SQLite Error 5: 'database is locked'` (SQLITE_BUSY) | Multiple concurrent writers | Channel-based write queue — one writer at a time, all others wait in FIFO order |
+            | `SQLite Error 5: 'database is locked'` (SQLITE_BUSY_SNAPSHOT, code 517) | WAL read snapshot stale mid-transaction | `BEGIN IMMEDIATE` upgrade + full operation restart |
+            | `A second operation was started on this context instance` | Shared `DbContext` across concurrent tasks | `IDbContextFactory<T>` registration |
+            | Slow bulk inserts | One `SaveChanges` per entity | `BulkInsertOptimizedAsync` — batched writes, ChangeTracker cleared per batch |
+
+            ---
+
+            ## Quick Setup
+
+            **ASP.NET Core / request-scoped:**
+            ```csharp
+            builder.Services.AddConcurrentSqliteDbContext<AppDbContext>("Data Source=app.db");
+            ```
+
+            **Background services / `Task.WhenAll` / concurrent workloads:**
+            ```csharp
+            builder.Services.AddConcurrentSqliteDbContextFactory<AppDbContext>("Data Source=app.db");
+
+            // Each concurrent task gets its own context — writes are serialized automatically
+            var tasks = ids.Select(async id =>
+            {
+                await using var db = factory.CreateDbContext();
+                db.Items.Add(new Item { Id = id });
+                await db.SaveChangesAsync(); // never throws SQLITE_BUSY
+            });
+            await Task.WhenAll(tasks);
+            ```
+
+            **Bulk import:**
+            ```csharp
+            await context.BulkInsertOptimizedAsync(records); // 161x faster than SaveChanges-per-entity
+            ```
+
+            ---
+
+            ## Documentation
+
+            - [Troubleshooting SQLITE_BUSY errors](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/blob/main/docs/troubleshooting-sqlite-busy.md)
+            - [Concurrent EF Core patterns](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/blob/main/docs/concurrent-efcore-patterns.md)
+            - [Performance and WAL tuning guide](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/blob/main/docs/performance-guide.md)
+            - [Migration guide from plain UseSqlite](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/blob/main/docs/migration-guide.md)
+            - [Full README](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/blob/main/README.md)
+            - [CHANGELOG](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/blob/main/CHANGELOG.md)
+
+            ---
+
+            ## Requirements
+
+            - .NET 10.0+ (for EF Core APIs) or netstandard 2.0+ (for connection layer only)
+            - Entity Framework Core 10.0+
+            - Microsoft.Data.Sqlite 10.0+
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
