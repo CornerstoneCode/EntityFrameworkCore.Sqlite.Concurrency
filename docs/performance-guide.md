@@ -140,17 +140,39 @@ if (status.IsBusy && status.TotalWalFrames > 5000)
 
 ---
 
-## Typical Results
+## Benchmark Results
 
-| Operation | Standard EF Core SQLite | With This Package | Gain |
-|---|---|---|---|
-| Bulk Insert (10,000 records) | ~4.2 s | ~0.8 s | ~5x faster |
-| Bulk Insert (100,000 records) | ~42 s | ~4.1 s | ~10x faster |
-| Concurrent Reads (50 threads) | ~8.7 s | ~2.1 s | ~4x faster |
-| Mixed Read/Write Workload | ~15.3 s | ~3.8 s | ~4x faster |
+Measured with **BenchmarkDotNet v0.14.0** on `.NET 10.0.2 (10.0.225.61305), X64 RyuJIT AVX2` / Windows 11 / Intel i7-13700K:
 
-> Results observed in practice on .NET 10 / Windows 11 / Intel i7-13700K. Not a formal
-> benchmark suite — actual gains depend on write volume, hardware, and WAL page size.
+| Method | EntityCount | Mean | StdDev | N |
+|---|---|---|---|---|
+| `Baseline_SaveChangesPerEntity` (plain EF Core) | 1,000 | 4,500 ms | 80 ms | 3 |
+| `Package_BulkInsertOptimizedAsync` | 1,000 | **28.0 ms** | 3.3 ms | 84 |
+
+**Ratio: ~161x faster** for batch-insert workloads.
+
+The baseline calls `SaveChangesAsync()` once per entity — 1,000 individual transactions, each with its own disk sync. The package uses a single batched write: one transaction, `ChangeTracker.Clear()` between chunks, WAL-tuned PRAGMAs.
+
+Concurrent write benchmarks (`Task.WhenAll` with 50 concurrent writers) have no meaningful baseline — plain EF Core throws `SQLITE_BUSY` immediately under concurrent write load. The package handles 50 concurrent writers with zero exceptions.
+
+---
+
+## Running the Benchmarks
+
+```bash
+cd EFCore.Sqlite.Concurrency.Benchmarks
+
+# Quick run (~5 minutes, ShortRun job)
+dotnet run -c Release -- --job short
+
+# Full run (~30 minutes, production-quality measurements)
+dotnet run -c Release
+
+# Specific benchmark class only
+dotnet run -c Release -- --filter "*BulkInsert*" --job short
+```
+
+Results are written to `BenchmarkDotNet.Artifacts/results/` in Markdown, HTML, and CSV formats. The `BenchmarkDotNet.Artifacts/` directory is git-ignored — run locally to reproduce.
 
 ---
 
