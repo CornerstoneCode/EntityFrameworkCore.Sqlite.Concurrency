@@ -12,7 +12,6 @@ namespace EntityFrameworkCore.Sqlite.Concurrency;
 /// <typeparam name="TContext">The type of the actual DbContext.</typeparam>
 public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbContext
 {
-    private SemaphoreSlim? _writeLock;
     private readonly string? _connectionString;
 
     /// <summary>
@@ -22,7 +21,6 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     public ThreadSafeSqliteContext(string connectionString)
     {
         _connectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
-        _writeLock = SqliteConnectionEnhancer.GetWriteLock(_connectionString);
     }
 
     /// <summary>
@@ -33,27 +31,17 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     {
         var extension = options.FindExtension<SqliteOptionsExtension>();
         if (extension?.ConnectionString != null)
-        {
             _connectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(extension.ConnectionString);
-            _writeLock = SqliteConnectionEnhancer.GetWriteLock(_connectionString);
-        }
         else if (extension?.Connection != null)
-        {
             _connectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(extension.Connection.ConnectionString);
-            _writeLock = SqliteConnectionEnhancer.GetWriteLock(_connectionString);
-        }
     }
 
-    private SemaphoreSlim WriteLock
+    private SqliteWriteQueue WriteQueue
     {
         get
         {
-            if (_writeLock != null) return _writeLock;
-
-            // Fallback for cases where connection string wasn't available in constructor
-            var connectionString = Database.GetDbConnection().ConnectionString;
-            _writeLock = SqliteConnectionEnhancer.GetWriteLock(connectionString);
-            return _writeLock;
+            var cs = _connectionString ?? Database.GetDbConnection().ConnectionString;
+            return SqliteConnectionEnhancer.GetWriteQueue(cs, Options.WriteQueueCapacity);
         }
     }
 
@@ -97,73 +85,50 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
         Func<TContext, Task<T>> operation,
         CancellationToken ct = default)
     {
-        // Reentrancy check: if this execution flow already holds the lock, execute
-        // directly to avoid deadlocking on the same SemaphoreSlim.
-        if (SqliteConnectionEnhancer.IsWriteLockHeld.Value)
+        var maxRetryAttempts = Options.MaxRetryAttempts;
+
+        return await WriteQueue.EnqueueAsync(async () =>
         {
-            return await operation((TContext)(object)this);
-        }
-
-        int attempt = 0;
-        int maxRetryAttempts = Options.MaxRetryAttempts;
-
-        while (true)
-        {
-            await WriteLock.WaitAsync(ct);
-            SqliteConnectionEnhancer.IsWriteLockHeld.Value = true;
-
-            try
+            int attempt = 0;
+            while (true)
             {
-                // The interceptor will upgrade this BEGIN to BEGIN IMMEDIATE, ensuring
-                // no later statement in the transaction fails with SQLITE_BUSY before
-                // commit (as long as UpgradeTransactionsToImmediate is true).
-                await using var transaction = await Database.BeginTransactionAsync(
-                    System.Data.IsolationLevel.Serializable, ct);
-
-                var result = await operation((TContext)(object)this);
-                await SaveChangesAsync(ct);
-                await transaction.CommitAsync(ct);
-
-                return result;
-            }
-            catch (SqliteException ex) when (SqliteErrorCodes.IsAnyBusy(ex))
-            {
-                // Release the lock before sleeping so other writers can make progress.
-                SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
-                WriteLock.Release();
-
-                attempt++;
-                if (attempt >= maxRetryAttempts)
+                try
                 {
-                    var kind = SqliteErrorCodes.IsBusySnapshot(ex)
-                        ? "SQLITE_BUSY_SNAPSHOT (stale read snapshot — another writer committed after this transaction began)"
-                        : $"SQLITE_BUSY (extended code {ex.SqliteExtendedErrorCode})";
+                    // The interceptor will upgrade this BEGIN to BEGIN IMMEDIATE, ensuring
+                    // no later statement in the transaction fails with SQLITE_BUSY before
+                    // commit (as long as UpgradeTransactionsToImmediate is true).
+                    await using var transaction = await Database.BeginTransactionAsync(
+                        System.Data.IsolationLevel.Serializable, ct);
 
-                    throw new TimeoutException(
-                        $"SQLite database busy after {attempt} retry attempt(s). " +
-                        $"Error: {kind}. " +
-                        $"Consider increasing MaxRetryAttempts or BusyTimeout.",
-                        ex);
+                    var result = await operation((TContext)(object)this);
+                    await SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+
+                    return result;
                 }
-
-                // Exponential backoff with full jitter: sleep in [baseDelay, 2×baseDelay].
-                // Jitter prevents synchronized retry storms when multiple threads contend.
-                var baseDelay = 100 * Math.Pow(2, attempt);
-                var jitter    = Random.Shared.NextDouble() * baseDelay;
-                await Task.Delay(TimeSpan.FromMilliseconds(baseDelay + jitter), ct);
-
-                // Continue to next loop iteration — for BUSY_SNAPSHOT this correctly
-                // restarts the entire operation lambda so stale data is re-queried.
-            }
-            finally
-            {
-                if (SqliteConnectionEnhancer.IsWriteLockHeld.Value)
+                catch (SqliteException ex) when (SqliteErrorCodes.IsAnyBusy(ex))
                 {
-                    SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
-                    WriteLock.Release();
+                    attempt++;
+                    if (attempt >= maxRetryAttempts)
+                    {
+                        var kind = SqliteErrorCodes.IsBusySnapshot(ex)
+                            ? "SQLITE_BUSY_SNAPSHOT (stale read snapshot — another writer committed after this transaction began)"
+                            : $"SQLITE_BUSY (extended code {ex.SqliteExtendedErrorCode})";
+
+                        throw new TimeoutException(
+                            $"SQLite database busy after {attempt} retry attempt(s). " +
+                            $"Error: {kind}. " +
+                            $"Consider increasing MaxRetryAttempts or BusyTimeout.",
+                            ex);
+                    }
+
+                    // Exponential backoff with full jitter: sleep in [baseDelay, 2×baseDelay].
+                    var baseDelay = 100 * Math.Pow(2, attempt);
+                    var jitter    = Random.Shared.NextDouble() * baseDelay;
+                    await Task.Delay(TimeSpan.FromMilliseconds(baseDelay + jitter), ct);
                 }
             }
-        }
+        }, ct);
     }
 
     /// <summary>
@@ -213,12 +178,11 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     {
         await ExecuteWriteAsync(async ctx =>
         {
-            var batchSize = 1000;
-            for (int i = 0; i < entities.Count; i += batchSize)
+            foreach (var batch in entities.Chunk(1000))
             {
-                var batch = entities.Skip(i).Take(batchSize).ToList();
                 await ctx.AddRangeAsync(batch, ct);
                 await ctx.SaveChangesAsync(ct);
+                ctx.ChangeTracker.Clear();
             }
         }, ct);
     }
@@ -230,7 +194,21 @@ public class ThreadSafeSqliteContext<TContext> : DbContext where TContext : DbCo
     {
         get
         {
-            _options ??= new SqliteConcurrencyOptions();
+            if (_options != null) return _options;
+
+            // Read the options configured via UseSqliteWithConcurrency so that
+            // MaxRetryAttempts, WriteQueueCapacity, etc. reflect the user's settings.
+            if (_connectionString != null)
+            {
+                var interceptor = SqliteConnectionEnhancer.TryGetInterceptor(_connectionString);
+                if (interceptor != null)
+                {
+                    _options = interceptor.Options;
+                    return _options;
+                }
+            }
+
+            _options = new SqliteConcurrencyOptions();
             return _options;
         }
     }

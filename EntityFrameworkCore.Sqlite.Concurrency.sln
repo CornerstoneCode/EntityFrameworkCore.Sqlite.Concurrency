@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EFCore.Sqlite.Concurrency", "EntityFrameworkCore.Sqlite.Concurrency\EFCore.Sqlite.Concurrency.csproj", "{CDD465FA-9DE5-48C7-931E-5D3B0A9AEED5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "EFCore.Sqlite.Concurrency.Test", "EFCore.Sqlite.Concurrency.Test\EFCore.Sqlite.Concurrency.Test.csproj", "{5EFE0CEB-C626-44AF-A963-D437A9816B2B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -18,5 +20,9 @@ Global
 		{CDD465FA-9DE5-48C7-931E-5D3B0A9AEED5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{CDD465FA-9DE5-48C7-931E-5D3B0A9AEED5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{CDD465FA-9DE5-48C7-931E-5D3B0A9AEED5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5EFE0CEB-C626-44AF-A963-D437A9816B2B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5EFE0CEB-C626-44AF-A963-D437A9816B2B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5EFE0CEB-C626-44AF-A963-D437A9816B2B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5EFE0CEB-C626-44AF-A963-D437A9816B2B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -154,12 +154,9 @@ public static class SqliteConcurrencyExtensions
 
         var connectionString = context.Database.GetDbConnection().ConnectionString;
         var enhancedConnectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
-        var writeLock = SqliteConnectionEnhancer.GetWriteLock(enhancedConnectionString);
+        var queue = SqliteConnectionEnhancer.GetWriteQueue(enhancedConnectionString);
 
-        await writeLock.WaitAsync(cancellationToken);
-        SqliteConnectionEnhancer.IsWriteLockHeld.Value = true;
-
-        try
+        return await queue.EnqueueAsync(async () =>
         {
             var delayMs = 50;
             for (var attempt = 1; ; attempt++)
@@ -175,12 +172,7 @@ public static class SqliteConcurrencyExtensions
                     delayMs = Math.Min(delayMs * 2, 2000);
                 }
             }
-        }
-        finally
-        {
-            SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
-            writeLock.Release();
-        }
+        }, cancellationToken);
     }
 
     // EF Core wraps SqliteException in DbUpdateException when SaveChangesAsync fails,
@@ -215,19 +207,13 @@ public static class SqliteConcurrencyExtensions
 
         var connectionString = context.Database.GetDbConnection().ConnectionString;
         var enhancedConnectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
-        var writeLock = SqliteConnectionEnhancer.GetWriteLock(enhancedConnectionString);
+        var queue = SqliteConnectionEnhancer.GetWriteQueue(enhancedConnectionString);
 
-        await writeLock.WaitAsync(cancellationToken);
-        SqliteConnectionEnhancer.IsWriteLockHeld.Value = true;
-
-        try
+        await queue.EnqueueAsync(async () =>
         {
             await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
 
-            var batchSize = 1000;
-            var batches = entities.Chunk(batchSize);
-
-            foreach (var batch in batches)
+            foreach (var batch in entities.Chunk(1000))
             {
                 await context.AddRangeAsync(batch, cancellationToken);
                 await context.SaveChangesAsync(cancellationToken);
@@ -235,11 +221,7 @@ public static class SqliteConcurrencyExtensions
             }
 
             await transaction.CommitAsync(cancellationToken);
-        }
-        finally
-        {
-            SqliteConnectionEnhancer.IsWriteLockHeld.Value = false;
-            writeLock.Release();
-        }
+            return 0;
+        }, cancellationToken);
     }
 }

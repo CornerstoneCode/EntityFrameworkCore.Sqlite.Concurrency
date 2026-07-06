@@ -113,6 +113,28 @@ public class SqliteConcurrencyOptions : IEquatable<SqliteConcurrencyOptions>
     public bool UpgradeTransactionsToImmediate { get; set; } = true;
 
     /// <summary>
+    /// Bounded capacity of the per-database write queue.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When set, the write queue uses a bounded <see cref="System.Threading.Channels.Channel{T}"/>
+    /// with <c>BoundedChannelFullMode.Wait</c>. Callers that enqueue writes while the channel is
+    /// at capacity will wait asynchronously until space is available, providing explicit
+    /// back-pressure under heavy write load.
+    /// </para>
+    /// <para>
+    /// When <see langword="null"/> (the default), the channel is unbounded and callers are
+    /// never delayed by back-pressure. The underlying queue still serializes writes in FIFO
+    /// order; only the maximum depth is unrestricted.
+    /// </para>
+    /// <para>
+    /// This value is used only when the write queue is first created for a given database.
+    /// Changing it after first use has no effect.
+    /// </para>
+    /// </remarks>
+    public int? WriteQueueCapacity { get; set; }
+
+    /// <summary>
     /// Optional logger factory used to create the interceptor's
     /// <see cref="ILogger"/>. Not included in equality comparison.
     /// </summary>
@@ -160,7 +182,8 @@ public class SqliteConcurrencyOptions : IEquatable<SqliteConcurrencyOptions>
             && CommandTimeout == other.CommandTimeout
             && WalAutoCheckpoint == other.WalAutoCheckpoint
             && SynchronousMode == other.SynchronousMode
-            && UpgradeTransactionsToImmediate == other.UpgradeTransactionsToImmediate;
+            && UpgradeTransactionsToImmediate == other.UpgradeTransactionsToImmediate
+            && WriteQueueCapacity == other.WriteQueueCapacity;
         // LoggerFactory is intentionally excluded from equality: it is infrastructure
         // metadata and does not affect SQLite behaviour.
     }
@@ -182,5 +205,6 @@ public class SqliteConcurrencyOptions : IEquatable<SqliteConcurrencyOptions>
             CommandTimeout,
             WalAutoCheckpoint,
             SynchronousMode,
-            UpgradeTransactionsToImmediate);
+            UpgradeTransactionsToImmediate,
+            WriteQueueCapacity);
 }
