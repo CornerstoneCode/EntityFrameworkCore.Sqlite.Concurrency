@@ -2,6 +2,7 @@
 
 [![NuGet Version](https://img.shields.io/nuget/v/EntityFrameworkCore.Sqlite.Concurrency?style=flat-square&color=2A4F7B)](https://www.nuget.org/packages/EntityFrameworkCore.Sqlite.Concurrency)
 [![Downloads](https://img.shields.io/nuget/dt/EntityFrameworkCore.Sqlite.Concurrency?style=flat-square&color=1C7C54)](https://www.nuget.org/packages/EntityFrameworkCore.Sqlite.Concurrency)
+[![CI](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/actions/workflows/ci.yml/badge.svg)](https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-5E2B97?style=flat-square)](https://opensource.org/licenses/MIT)
 [![.NET 10](https://img.shields.io/badge/.NET-10-2A4F7B?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
 
@@ -190,16 +191,18 @@ A: EF Core's `DbContext` is not thread-safe by design — it tracks entity state
 
 ---
 
-## Typical Results
+## Benchmark Results
 
-| Operation | Standard EF Core SQLite | EntityFrameworkCore.Sqlite.Concurrency | Gain |
+Measured with [BenchmarkDotNet v0.14.0](https://benchmarkdotnet.org) on .NET 10.0.2 / Windows 11 / Intel i7-13700K:
+
+| Benchmark | Standard EF Core | This Package | Ratio |
 |---|---|---|---|
-| Bulk Insert (10,000 records) | ~4.2 s | ~0.8 s | ~5x faster |
-| Bulk Insert (100,000 records) | ~42 s | ~4.1 s | ~10x faster |
-| Concurrent Reads (50 threads) | ~8.7 s | ~2.1 s | ~4x faster |
-| Mixed Read/Write Workload | ~15.3 s | ~3.8 s | ~4x faster |
+| `BulkInsertOptimizedAsync` — 1,000 entities | **4,500 ms** | **28 ms** | ~161x faster |
+| Concurrent writes (50 tasks, `Task.WhenAll`) | throws `SQLITE_BUSY` | completes cleanly | ∞ |
 
-> Results observed in practice on .NET 10 / Windows 11 / Intel i7-13700K. Not a formal benchmark suite — actual gains depend on write volume, hardware, and WAL page size.
+> Bulk insert: baseline calls `SaveChangesAsync()` per entity (1,000 individual transactions); package uses a single batched write. Full numbers and reproduce command: `docs/performance-guide.md`.
+>
+> Reproduce: `dotnet run -c Release --project EFCore.Sqlite.Concurrency.Benchmarks -- --job short`
 
 ---
 
