@@ -1,0 +1,97 @@
+name: Bug Report
+description: Something isn't working — SQLITE_BUSY still occurring, incorrect behavior, crash
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. The more detail you provide, the faster we can help.
+
+  - type: input
+    id: package_version
+    attributes:
+      label: Package Version
+      description: Which version of EntityFrameworkCore.Sqlite.Concurrency?
+      placeholder: e.g. 10.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: dotnet_version
+    attributes:
+      label: .NET Version
+      description: Output of `dotnet --version`
+      placeholder: e.g. 10.0.100
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: e.g. Windows 11, Ubuntu 24.04, macOS 15
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_message
+    attributes:
+      label: Error Message / Stack Trace
+      description: The full exception message and stack trace. Remove any sensitive connection string details.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: connection_string
+    attributes:
+      label: Connection String (redacted)
+      description: Your connection string with any sensitive values replaced with `***`
+      placeholder: "Data Source=app.db"
+    validations:
+      required: true
+
+  - type: textarea
+    id: registration
+    attributes:
+      label: Registration Code
+      description: How you registered the context (AddConcurrentSqliteDbContext, AddConcurrentSqliteDbContextFactory, UseSqliteWithConcurrency, etc.)
+      render: csharp
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: Minimal steps to reproduce. A failing test or small console app is ideal.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I am not using `Cache=Shared` in my connection string
+          required: false
+        - label: I am using `IDbContextFactory<T>` for concurrent workloads (not a shared `DbContext`)
+          required: false
+        - label: The database is on local disk (not NFS/SMB/network path)
+          required: false

@@ -1,9 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
+        <TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
         <RootNamespace>EntityFrameworkCore.Sqlite.Concurrency</RootNamespace>
         <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -11,7 +12,7 @@
 
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
-        <Version>10.0.4</Version>
+        <Version>10.1.0</Version>
 
         <!-- Core Metadata for Trust & Recognition -->
         <Authors>Mike Gotfryd</Authors>
@@ -21,50 +22,37 @@
         <!-- ========== CRITICAL SEO OPTIMIZATIONS ========== -->
         <!-- 1. OPTIMIZED DESCRIPTION (Front-loaded value) -->
         <Description>
-            Eliminates 'SQLITE_BUSY' / 'database is locked' errors in multi-threaded 
-            Entity Framework Core apps. Provides automatic write serialization, 10x faster 
-            bulk inserts, and true parallel reads for SQLite. A drop-in, high-performance, 
-            thread-safe addition to Microsoft.EntityFrameworkCore.Sqlite in .NET 10.
+            Fixes SQLITE_BUSY / "database is locked" / SQLITE_BUSY_SNAPSHOT errors in Entity
+            Framework Core + SQLite apps. Provides Channel-based write serialization, automatic
+            BEGIN IMMEDIATE transaction upgrades, exponential-backoff retry, WAL-mode optimization,
+            and 10x faster bulk inserts. Drop-in replacement for UseSqlite() targeting .NET 10
+            and netstandard 2.0.
         </Description>
 
-        
         <!-- 2. CORRECTED TAGS FORMAT (Space-delimited per NuGet spec) -->
-        <PackageTags>sqlite sqlite3 entity-framework-core efcore concurrency thread-safe multi-threading database-locked sqlite-busy performance bulk-insert parallel-reads write-ahead-logging wal dotnet-10 entity-framework orm database-provider high-performance async transactions locking queue</PackageTags>
-        
+        <PackageTags>sqlite sqlite3 entity-framework-core efcore concurrency thread-safe multi-threading database-locked sqlite-busy sqlite-busy-snapshot error-5 write-serialization channel-queue netstandard2 efcore-concurrency performance bulk-insert parallel-reads write-ahead-logging wal dotnet-10 entity-framework orm database-provider high-performance async transactions locking queue background-service task-whenall</PackageTags>
+
         <!-- 3. STRUCTURED RELEASE NOTES -->
         <PackageReleaseNotes>
             <![CDATA[
-v10.0.3 — SQLITE_BUSY_SNAPSHOT fix, IDbContextFactory support, structured logging
-
-BUGS FIXED
-• SQLITE_BUSY_SNAPSHOT (extended code 517) now correctly restarts the full operation lambda
-  instead of retrying the same statement — the only correct fix for a stale WAL read snapshot.
-• Exponential backoff now uses full jitter ([baseDelay, 2×baseDelay]) to prevent thundering
-  herd when multiple threads contend simultaneously.
-• Cache=Shared in the connection string now throws ArgumentException at startup — it silently
-  broke WAL mode semantics in prior versions.
-• Invalid SqliteConcurrencyOptions values (MaxRetryAttempts ≤ 0, negative BusyTimeout, etc.)
-  now throw ArgumentOutOfRangeException at startup instead of silently misbehaving.
+v10.1.0 — Channel-Based Write Queue, netstandard 2.0, Bug Fixes
 
 NEW FEATURES
-• AddConcurrentSqliteDbContextFactory<T> — registers IDbContextFactory<T> with all concurrency
-  settings. Use this for Task.WhenAll, background services, Channel<T> consumers, and any
-  workload that creates concurrent database operations. DbContext is not thread-safe; the factory
-  pattern gives each concurrent flow its own independent instance.
-• Structured logging: pass ILoggerFactory (or let DI resolve it) to get Warning logs for
-  SQLITE_BUSY/SQLITE_BUSY_SNAPSHOT events, Error logs for SQLITE_LOCKED, and Debug logs for
-  BEGIN IMMEDIATE upgrades — all through your existing logging pipeline.
-• GetWalCheckpointStatusAsync — runs PRAGMA wal_checkpoint(PASSIVE) and returns a typed
-  WalCheckpointStatus with IsBusy, TotalWalFrames, CheckpointedFrames, and CheckpointProgress.
-  Call periodically to detect long-running readers blocking WAL reclamation before it degrades
-  read performance.
-• TryReleaseMigrationLockAsync — detects and optionally clears a stale __EFMigrationsLock
-  row left behind by a crashed migration process. Prevents indefinite blocking on Database.Migrate()
-  in multi-instance deployments.
-• SynchronousMode option — configures PRAGMA synchronous (Off / Normal / Full / Extra).
-  Default remains Normal (recommended for WAL: safe after app crash, fast writes).
-• UpgradeTransactionsToImmediate option — opt out of the BEGIN → BEGIN IMMEDIATE rewrite
-  if you manage write transactions explicitly yourself. Default remains true.
+• Channel-based write queue: replaces SemaphoreSlim with Channel<IWriteRequest> + single
+  background writer. SemaphoreSlim wakes all N waiters simultaneously (thundering herd);
+  Channel parks callers in FIFO order — no wakeup storm, fairer scheduling, lower CPU.
+  Zero API change — existing call sites benefit automatically.
+• WriteQueueCapacity option: new int? on SqliteConcurrencyOptions (null = unbounded).
+  Set a value to create a bounded channel with back-pressure (BoundedChannelFullMode.Wait).
+• netstandard 2.0 TFM: SqliteConnectionEnhancer, SqliteWriteQueue, SqliteConcurrencyOptions
+  now available on any runtime supporting netstandard 2.0. EF Core APIs remain net10.0-only.
+
+BUG FIXES
+• ThreadSafeSqliteContext always used default options: ExecuteWriteAsync was constructing
+  new SqliteConcurrencyOptions() instead of reading registered interceptor options. Fixed
+  via TryGetInterceptor lookup.
+• BulkInsertSafeAsync O(n²) + unbounded ChangeTracker growth: Skip/Take loop replaced with
+  Chunk(1000); ChangeTracker.Clear() added after each batch SaveChangesAsync.
 
 NO BREAKING CHANGES — all existing call sites compile and behave correctly without modification.
 ]]>
@@ -98,14 +86,45 @@ NO BREAKING CHANGES — all existing call sites compile and behave correctly wit
         <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
-    <!-- Dependencies -->
+    <!-- Dependencies — EF Core 10.x is net10.0 only; netstandard2.0 gets the data layer only -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'net8.0' or '$(TargetFramework)' == 'net9.0'">
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+    </ItemGroup>
+    <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+        <PackageReference Include="Microsoft.Data.Sqlite" Version="7.0.20" />
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+        <PackageReference Include="System.Threading.Channels" Version="8.0.0" />
+    </ItemGroup>
+
+    <!-- EF Core source files excluded from netstandard2.0 (EF Core 10+ is net10.0-only) -->
+    <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+        <Compile Remove="src\SqliteConcurrencyExtensions.cs" />
+        <Compile Remove="src\SqliteConcurrencyInterceptor.cs" />
+        <Compile Remove="src\ThreadSafeSqliteContext.cs" />
+        <Compile Remove="src\ThreadSafeFactory.cs" />
+        <Compile Remove="src\ExtensionMethods\**\*.cs" />
+        <Compile Remove="src\SqliteDiagnostics.cs" />
+        <Compile Remove="src\ExtensionMethods\MemoryPackExtensions.cs" />
+    </ItemGroup>
+    <!-- SourceLink for debugging support -->
     <ItemGroup>
-        <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.2" />
-        <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.2" />
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.2" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
-        <!-- SourceLink for debugging support -->
-        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.201" PrivateAssets="All" />
+        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.300" PrivateAssets="All" />
+    </ItemGroup>
+
+    <!-- Suppress GHSA-2m69-gcr7-jv3q: SQLitePCLRaw.lib.e_sqlite3 2.1.11 is the latest
+         available version; no patched release exists yet on NuGet. Remove this suppression
+         once a fixed version ships and update the SQLitePCLRaw transitive references. -->
+    <ItemGroup>
+        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
     </ItemGroup>
 
     <!-- Optional Dependencies (Conditional) -->

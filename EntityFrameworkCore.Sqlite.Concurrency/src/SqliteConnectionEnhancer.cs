@@ -16,11 +16,16 @@ public static class SqliteConnectionEnhancer
     // Cache optimized connection strings to avoid repeated parsing
     private static readonly ConcurrentDictionary<string, string> _connectionStringCache = new();
 
-    // Shared locks per connection string to ensure serialization across multiple DbContext instances
+    // Channel-based write queues per connection string — one background writer loop per database file
+    private static readonly ConcurrentDictionary<string, SqliteWriteQueue> _writeQueues = new();
+
+    // Kept for backward compatibility; no longer used internally.
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _writeLocks = new();
 
+#if !NETSTANDARD2_0
     // Shared interceptors per connection string to avoid leaking background tasks
     private static readonly ConcurrentDictionary<string, SqliteConcurrencyInterceptor> _interceptors = new();
+#endif
 
     /// <summary>
     /// Tracks if the current execution flow already holds a write lock to prevent deadlocks.
@@ -47,13 +52,42 @@ public static class SqliteConnectionEnhancer
     }
 
     /// <summary>
+    /// Gets the shared write queue for the specified connection string.
+    /// </summary>
+    /// <param name="connectionString">The connection string.</param>
+    /// <param name="capacity">
+    /// Optional bounded capacity. When set, callers that enqueue while the channel is full
+    /// will wait asynchronously (back-pressure). Default is unbounded.
+    /// </param>
+    /// <returns>A <see cref="SqliteWriteQueue"/> that serializes writes for this database.</returns>
+    internal static SqliteWriteQueue GetWriteQueue(string connectionString, int? capacity = null)
+    {
+        return _writeQueues.GetOrAdd(connectionString, _ => new SqliteWriteQueue(capacity));
+    }
+
+    /// <summary>
     /// Gets a shared write lock for the specified connection string.
     /// </summary>
     /// <param name="connectionString">The connection string.</param>
     /// <returns>A semaphore used for write synchronization.</returns>
+    /// <remarks>
+    /// Preserved for backward compatibility. Internal code now uses
+    /// <see cref="GetWriteQueue"/> for write serialization.
+    /// </remarks>
+    [Obsolete("Use GetWriteQueue for write serialization. This method is preserved for backward compatibility.")]
     public static SemaphoreSlim GetWriteLock(string connectionString)
     {
         return _writeLocks.GetOrAdd(connectionString, _ => new SemaphoreSlim(1, 1));
+    }
+
+#if !NETSTANDARD2_0
+    /// <summary>
+    /// Returns the cached interceptor for a connection string, or <see langword="null"/> if none has been registered.
+    /// </summary>
+    internal static SqliteConcurrencyInterceptor? TryGetInterceptor(string connectionString)
+    {
+        _interceptors.TryGetValue(connectionString, out var interceptor);
+        return interceptor;
     }
 
     /// <summary>
@@ -99,6 +133,7 @@ public static class SqliteConnectionEnhancer
                $"SynchronousMode={options.SynchronousMode}, " +
                $"UpgradeTransactionsToImmediate={options.UpgradeTransactionsToImmediate}]";
     }
+#endif
 
     private static string ComputeOptimizedConnectionString(string originalConnectionString)
     {
@@ -392,14 +427,14 @@ public static class SqliteConnectionEnhancer
         if (connection is not SqliteConnection)
             return new WalCheckpointStatus(false, 0, 0);
 
-        await using var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         // PRAGMA wal_checkpoint(PASSIVE) returns a single row: (busy, log, checkpointed)
         // busy        — 1 if blocked by an active reader, 0 otherwise
         // log         — total WAL frames
         // checkpointed — frames successfully written back to the main DB
         command.CommandText = "PRAGMA wal_checkpoint(PASSIVE);";
 
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
             return new WalCheckpointStatus(false, 0, 0);
 
@@ -459,7 +494,7 @@ public static class SqliteConnectionEnhancer
             return false;
 
         // Check whether the migrations lock table exists at all.
-        await using var tableCmd = connection.CreateCommand();
+        using var tableCmd = connection.CreateCommand();
         tableCmd.CommandText =
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__EFMigrationsLock';";
         var tableCount = (long)(await tableCmd.ExecuteScalarAsync(cancellationToken) ?? 0L);
@@ -467,7 +502,7 @@ public static class SqliteConnectionEnhancer
             return false;
 
         // Check whether a lock row is present.
-        await using var lockCmd = connection.CreateCommand();
+        using var lockCmd = connection.CreateCommand();
         lockCmd.CommandText = "SELECT COUNT(*) FROM __EFMigrationsLock;";
         var lockCount = (long)(await lockCmd.ExecuteScalarAsync(cancellationToken) ?? 0L);
         if (lockCount == 0)
@@ -476,7 +511,7 @@ public static class SqliteConnectionEnhancer
         // A stale lock exists — remove it if requested.
         if (release)
         {
-            await using var deleteCmd = connection.CreateCommand();
+            using var deleteCmd = connection.CreateCommand();
             deleteCmd.CommandText = "DELETE FROM __EFMigrationsLock;";
             await deleteCmd.ExecuteNonQueryAsync(cancellationToken);
         }
