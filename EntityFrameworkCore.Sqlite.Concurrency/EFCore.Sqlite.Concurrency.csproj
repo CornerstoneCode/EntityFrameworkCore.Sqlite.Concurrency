@@ -120,6 +120,13 @@ NO BREAKING CHANGES — all existing call sites compile and behave correctly wit
         <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.300" PrivateAssets="All" />
     </ItemGroup>
 
+    <!-- Suppress GHSA-2m69-gcr7-jv3q: SQLitePCLRaw.lib.e_sqlite3 2.1.11 is the latest
+         available version; no patched release exists yet on NuGet. Remove this suppression
+         once a fixed version ships and update the SQLitePCLRaw transitive references. -->
+    <ItemGroup>
+        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+    </ItemGroup>
+
     <!-- Optional Dependencies (Conditional) -->
     <ItemGroup>
         <PackageReference Include="MemoryPack" Version="2.0.0" Condition="'$(IncludeMemoryPack)' == 'true'" />
