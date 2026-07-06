@@ -34,15 +34,7 @@ jobs:
       run: dotnet build EFCore.Sqlite.Concurrency.Test/EFCore.Sqlite.Concurrency.Test.csproj -c Release --no-restore
 
     - name: Test
-      run: dotnet test EFCore.Sqlite.Concurrency.Test/EFCore.Sqlite.Concurrency.Test.csproj --framework net10.0 -c Release --no-build --logger "trx;LogFileName=results.xml"
-
-    - name: Publish Test Results
-      uses: dorny/test-reporter@v1
-      if: always()
-      with:
-        name: xUnit Tests
-        path: "**/*.trx"
-        reporter: dotnet-trx
+      run: dotnet test EFCore.Sqlite.Concurrency.Test/EFCore.Sqlite.Concurrency.Test.csproj --framework net10.0 -c Release --no-build
 
     - name: Pack
       run: dotnet pack EntityFrameworkCore.Sqlite.Concurrency/EFCore.Sqlite.Concurrency.csproj -c Release --no-build -o out

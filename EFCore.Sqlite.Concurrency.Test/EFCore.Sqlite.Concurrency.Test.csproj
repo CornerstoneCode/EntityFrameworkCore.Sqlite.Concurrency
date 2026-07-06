@@ -28,4 +28,10 @@
         <Using Include="Xunit"/>
     </ItemGroup>
 
+    <!-- Suppress GHSA-2m69-gcr7-jv3q: SQLitePCLRaw.lib.e_sqlite3 2.1.11 is the latest
+         available version; no patched release exists yet on NuGet. -->
+    <ItemGroup>
+        <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+    </ItemGroup>
+
 </Project>
