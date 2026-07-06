@@ -16,3 +16,9 @@ Tests/obj/
 EFCore.Sqlite.Concurrency.Test/bin/
 
 EFCore.Sqlite.Concurrency.Test/obj/
+
+EFCore.Sqlite.Concurrency.Benchmarks/bin/
+
+EFCore.Sqlite.Concurrency.Benchmarks/obj/
+
+BenchmarkDotNet.Artifacts/
