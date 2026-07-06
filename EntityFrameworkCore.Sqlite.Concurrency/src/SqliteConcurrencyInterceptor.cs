@@ -12,7 +12,6 @@ namespace EntityFrameworkCore.Sqlite.Concurrency;
 public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionInterceptor, IDbTransactionInterceptor
 {
     private readonly SqliteConcurrencyOptions _options;
-    private readonly SemaphoreSlim _writeLock;
     private readonly string _connectionString;
     private readonly ILogger<SqliteConcurrencyInterceptor>? _logger;
 
@@ -30,7 +29,8 @@ public class SqliteConcurrencyInterceptor : DbCommandInterceptor, IDbConnectionI
     {
         _options = options;
         _connectionString = connectionString;
-        _writeLock = SqliteConnectionEnhancer.GetWriteLock(connectionString);
+        // Ensure the write queue is created for this database with the configured capacity.
+        SqliteConnectionEnhancer.GetWriteQueue(connectionString, options.WriteQueueCapacity);
         _logger = options.LoggerFactory?.CreateLogger<SqliteConcurrencyInterceptor>();
     }
 

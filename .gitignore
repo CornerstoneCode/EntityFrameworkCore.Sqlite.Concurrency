@@ -12,3 +12,7 @@ EntityFrameworkCore.Sqlite.Concurrency/bin/
 Tests/bin/
 
 Tests/obj/
+
+EFCore.Sqlite.Concurrency.Test/bin/
+
+EFCore.Sqlite.Concurrency.Test/obj/
