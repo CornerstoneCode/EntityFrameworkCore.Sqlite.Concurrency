@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a `SaveChangesSerializedAsync` overload that accepts a save delegate, enabling safe serialized `DbContext.SaveChangesAsync` overrides without recursion.
+
 ---
 
 ## [10.1.0] - 2026-07-05
