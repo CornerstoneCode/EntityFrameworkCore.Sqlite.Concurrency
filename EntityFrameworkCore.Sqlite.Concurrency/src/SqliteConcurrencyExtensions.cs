@@ -144,13 +144,46 @@ public static class SqliteConcurrencyExtensions
     /// acquisition to prevent deadlocks.
     /// </para>
     /// </remarks>
+    public static Task<int> SaveChangesSerializedAsync(
+        this DbContext context,
+        int maxRetries = 3,
+        CancellationToken cancellationToken = default) =>
+        context.SaveChangesSerializedAsync(
+            context.SaveChangesAsync,
+            maxRetries,
+            cancellationToken);
+
+    /// <summary>
+    /// Saves all changes in the context while holding the shared per-database write lock,
+    /// using the supplied save delegate for the actual EF Core save operation.
+    /// </summary>
+    /// <param name="context">The database context.</param>
+    /// <param name="saveChangesAsync">
+    /// The save operation to execute while the write lock is held. Pass a base-save delegate
+    /// from <see cref="DbContext.SaveChangesAsync(CancellationToken)"/> overrides to avoid
+    /// recursively calling the override.
+    /// </param>
+    /// <param name="maxRetries">
+    /// Maximum number of retry attempts if <c>SQLITE_BUSY</c> is returned even after the
+    /// write lock is held. Uses exponential backoff starting at 50 ms, capped at 2 000 ms.
+    /// </param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The number of state entries written to the database.</returns>
+    /// <remarks>
+    /// Use this overload when serializing saves from a <see cref="DbContext.SaveChangesAsync(CancellationToken)"/>
+    /// override. The default overload calls <c>context.SaveChangesAsync</c>, which would re-enter
+    /// that override.
+    /// </remarks>
     public static async Task<int> SaveChangesSerializedAsync(
         this DbContext context,
+        Func<CancellationToken, Task<int>> saveChangesAsync,
         int maxRetries = 3,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(saveChangesAsync);
+
         if (SqliteConnectionEnhancer.IsWriteLockHeld.Value)
-            return await context.SaveChangesAsync(cancellationToken);
+            return await saveChangesAsync(cancellationToken);
 
         var connectionString = context.Database.GetDbConnection().ConnectionString;
         var enhancedConnectionString = SqliteConnectionEnhancer.GetOptimizedConnectionString(connectionString);
@@ -164,7 +197,7 @@ public static class SqliteConcurrencyExtensions
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    return await context.SaveChangesAsync(cancellationToken);
+                    return await saveChangesAsync(cancellationToken);
                 }
                 catch (Exception ex) when (attempt < maxRetries && IsRetryableSqliteBusy(ex))
                 {
