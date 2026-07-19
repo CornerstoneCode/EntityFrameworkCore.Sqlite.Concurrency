@@ -48,6 +48,40 @@ public class ConcurrencyStressTests
         Assert.Equal(expected, ids.Count); // no duplicate IDs
     }
 
+    [Fact]
+    public async Task SaveChangesSerializedAsync_AllowsDbContextOverride()
+    {
+        const int writers = 100;
+        const int rowsPerWriter = 10;
+        const int expected = writers * rowsPerWriter;
+
+        using var db = new TempDatabase();
+
+        var tasks = Enumerable.Range(0, writers).Select(async writerIdx =>
+        {
+            await using var ctx = new OverrideSaveChangesDbContext(db.ConnectionString);
+
+            var entities = Enumerable.Range(0, rowsPerWriter)
+                .Select(i => new StressEntity
+                {
+                    Id          = Guid.NewGuid(),
+                    WriterIndex = writerIdx,
+                    Payload     = $"override-w{writerIdx}-r{i}"
+                })
+                .ToList();
+
+            ctx.Entities.AddRange(entities);
+            await ctx.SaveChangesAsync();
+        });
+
+        await Task.WhenAll(tasks);
+
+        await using var verify = db.CreateContext();
+        var count = await verify.Entities.CountAsync();
+
+        Assert.Equal(expected, count);
+    }
+
     // ── Test 2: BulkInsertOptimizedAsync ─────────────────────────────────────
 
     [Fact]
