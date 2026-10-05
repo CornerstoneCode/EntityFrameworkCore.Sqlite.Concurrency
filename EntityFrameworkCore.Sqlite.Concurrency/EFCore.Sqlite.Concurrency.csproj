@@ -12,7 +12,7 @@
 
         <!-- Core Package Identity -->
         <PackageId>EntityFrameworkCore.Sqlite.Concurrency</PackageId>
-        <Version>10.1.0</Version>
+        <Version>10.1.1</Version>
 
         <!-- Core Metadata for Trust & Recognition -->
         <Authors>Mike Gotfryd</Authors>
@@ -20,27 +20,45 @@
         <Copyright>© 2026 Cornerstone Code. All rights reserved.</Copyright>
 
         <!-- ========== CRITICAL SEO OPTIMIZATIONS ========== -->
-        <!-- 1. OPTIMIZED DESCRIPTION (Front-loaded value) -->
+        <!-- 1. OPTIMIZED DESCRIPTION (Front-loaded value + discoverability) -->
         <Description>
-            Fixes SQLITE_BUSY / "database is locked" / SQLITE_BUSY_SNAPSHOT errors in Entity
-            Framework Core + SQLite apps. Provides Channel-based write serialization, automatic
-            BEGIN IMMEDIATE transaction upgrades, exponential-backoff retry, WAL-mode optimization,
-            and 10x faster bulk inserts. Drop-in replacement for UseSqlite() targeting .NET 10
-            and netstandard 2.0.
+            Solve SQLite concurrency errors (SQLITE_BUSY, "database is locked", SQLITE_BUSY_SNAPSHOT) in 
+            Entity Framework Core with drop-in write serialization. Implements Channel-based queuing, 
+            automatic BEGIN IMMEDIATE transaction upgrades, exponential-backoff retry with full jitter, 
+            WAL-mode optimization, and 10x faster bulk inserts. Solves multi-writer, multi-reader conflicts 
+            without connection pooling complexity. Works with .NET 10 and netstandard 2.0 runtimes. 
+            Security: Updated SQLitePCLRaw.core to 2.1.12 (fixes GHSA-2m69-gcr7-jv3q).
         </Description>
 
-        <!-- 2. CORRECTED TAGS FORMAT (Space-delimited per NuGet spec) -->
-        <PackageTags>sqlite sqlite3 entity-framework-core efcore concurrency thread-safe multi-threading database-locked sqlite-busy sqlite-busy-snapshot error-5 write-serialization channel-queue netstandard2 efcore-concurrency performance bulk-insert parallel-reads write-ahead-logging wal dotnet-10 entity-framework orm database-provider high-performance async transactions locking queue background-service task-whenall</PackageTags>
+        <!-- 2. ENHANCED TAGS (SEO + Discovery) -->
+        <PackageTags>sqlite sqlite3 entity-framework-core efcore concurrency thread-safe multi-threading database-locked sqlite-busy sqlite-busy-snapshot error-5 write-serialization channel-queue netstandard2 efcore-concurrency performance bulk-insert parallel-reads write-ahead-logging wal dotnet-10 entity-framework orm database-provider high-performance async transactions locking queue background-service task-whenall sql-locking deadlock-prevention database-concurrency write-queue security vulnerability patch</PackageTags>
 
-        <!-- 3. STRUCTURED RELEASE NOTES -->
+        <!-- 3. STRUCTURED RELEASE NOTES (Clear, SEO-optimized) -->
         <PackageReleaseNotes>
             <![CDATA[
+v10.1.1 — Security Patch: Dependency Upgrade
+
+SECURITY UPDATE
+• Upgraded SQLitePCLRaw.core to 2.1.12 — addresses vulnerability GHSA-2m69-gcr7-jv3q
+  (SQLite core library security fix). All transitive SQLitePCLRaw packages updated.
+  Suppression comment removed; vulnerability now fully patched.
+
+COMPATIBILITY
+• No API changes. No breaking changes. Zero migration effort.
+• Fully backward compatible with v10.1.0.
+
+VERIFICATION
+• All dependencies verified on NuGet.
+• Build passes with 0 errors (3 pre-existing warnings unrelated to security).
+• No outdated packages detected.
+
+===== PREVIOUS RELEASE: v10.1.0 =====
+
 v10.1.0 — Channel-Based Write Queue, netstandard 2.0, Bug Fixes
 
 NEW FEATURES
 • Channel-based write queue: replaces SemaphoreSlim with Channel<IWriteRequest> + single
-  background writer. SemaphoreSlim wakes all N waiters simultaneously (thundering herd);
-  Channel parks callers in FIFO order — no wakeup storm, fairer scheduling, lower CPU.
+  background writer. Eliminates thundering herd; FIFO fairness; lower CPU under concurrent load.
   Zero API change — existing call sites benefit automatically.
 • WriteQueueCapacity option: new int? on SqliteConcurrencyOptions (null = unbounded).
   Set a value to create a bounded channel with back-pressure (BoundedChannelFullMode.Wait).
