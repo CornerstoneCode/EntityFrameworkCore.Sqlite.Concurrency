@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /d/PersonalGitRepos/EFCore.Sqlite.Concurrency/EntityFrameworkCore.Sqlite.Concurrency/src/*.cs)",
+      "Bash(dotnet build:*)",
+      "WebFetch(domain:docs.binance.us)",
+      "Bash(xargs grep *)",
+      "Bash(dotnet:*)",
+      "Bash(dotnet build --help:*)",
+      "Bash(python -c \"import json,sys; json.load\\(open\\(r'C:\\\\Users\\\\mikeg\\\\.claude\\\\settings.json'\\)\\); print\\('valid'\\)\")"
+    ]
+  }
+}
