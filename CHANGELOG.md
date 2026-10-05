@@ -14,6 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [10.1.1] - 2026-10-05
+
+### Security
+- **Upgraded SQLitePCLRaw.core to 2.1.12** — addresses vulnerability [GHSA-2m69-gcr7-jv3q](https://github.com/advisories/GHSA-2m69-gcr7-jv3q)
+  (SQLite embedded library security fix). All transitive `SQLitePCLRaw.*` packages updated to 2.1.12.
+  Vulnerability suppression comment removed from project file.
+
+### Compatibility
+- **Zero API changes.** Fully backward compatible with v10.1.0.
+- **Zero migration effort.** All existing code works without modification.
+
+---
+
 ## [10.1.0] - 2026-07-05
 
 ### Added
@@ -95,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SqliteDiagnostics` — opt-in Spectre.Console diagnostics UI (`-p:IncludeSpectre=true`).
 - `MemoryPackExtensions` — opt-in MemoryPack serialization (`-p:IncludeMemoryPack=true`).
 
-[Unreleased]: https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/compare/v10.1.0...HEAD
+[Unreleased]: https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/compare/v10.1.1...HEAD
+[10.1.1]: https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/compare/v10.1.0...v10.1.1
 [10.1.0]: https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/compare/v10.0.3...v10.1.0
 [10.0.3]: https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/compare/v10.0.2...v10.0.3
 [10.0.2]: https://github.com/CornerstoneCode/EntityFrameworkCore.Sqlite.Concurrency/compare/v10.0.1...v10.0.2
